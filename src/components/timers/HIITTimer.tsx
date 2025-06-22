@@ -1,4 +1,6 @@
+// src/components/timers/HIITTimer.tsx
 import React, { useState, useEffect, useRef } from 'react';
+import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -31,13 +33,13 @@ function HIITTimer() {
   const [restTime, setRestTime] = useState(selectedProtocol.restTime);
   const [rounds, setRounds] = useState(selectedProtocol.rounds);
   const [prepareTime, setPrepareTime] = useState(10);
-  
+
   const [currentRound, setCurrentRound] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<Phase>('prepare');
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
-  
+
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -52,8 +54,9 @@ function HIITTimer() {
   useEffect(() => {
     // Create audio context for phase transitions
     audioRef.current = new Audio();
+    // Base64 encoded audio for a simple beep/alert sound
     audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-    
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -65,7 +68,7 @@ function HIITTimer() {
     if (isRunning && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
         setTimeLeft(prevTime => {
-          if (prevTime <= 1) {
+          if (prevTime <= 1) { // Check for 1 second remaining
             handlePhaseTransition();
             return 0;
           }
@@ -83,20 +86,20 @@ function HIITTimer() {
         clearInterval(intervalRef.current);
       }
     };
-  }, [isRunning, timeLeft]);
+  }, [isRunning, timeLeft, currentPhase, workTime, restTime, rounds]); // Add all dependencies for logic
 
   const playSound = () => {
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        console.log('Phase transition');
+      audioRef.current.play().catch(error => {
+        console.error('Error playing sound:', error);
       });
     }
   };
 
   const handlePhaseTransition = () => {
     playSound();
-    
+
     if (currentPhase === 'prepare') {
       setCurrentPhase('work');
       setCurrentRound(1);
@@ -133,15 +136,28 @@ function HIITTimer() {
     setCurrentRound(0);
     setTimeLeft(0);
     setShowSettings(true);
+    // Reset work/rest/rounds to selected protocol's initial values
+    setWorkTime(selectedProtocol.workTime);
+    setRestTime(selectedProtocol.restTime);
+    setRounds(selectedProtocol.rounds);
+    setPrepareTime(10); // Reset prepare time to default
   };
 
   const handleProtocolChange = (protocolName: string) => {
     const protocol = hiitProtocols.find(p => p.name === protocolName) || hiitProtocols[0];
     setSelectedProtocol(protocol);
+    // When protocol changes, reset the timer state as well
+    setIsRunning(false);
+    setCurrentPhase('prepare');
+    setCurrentRound(0);
+    setTimeLeft(0);
+    setShowSettings(true);
   };
 
   const getTotalWorkoutTime = () => {
-    const totalTime = prepareTime + (workTime + restTime) * rounds - restTime; // No rest after last round
+    // Total time = prepare + (work + rest) * (rounds - 1) + final work round
+    // Or simpler: prepare + work*rounds + rest*(rounds-1)
+    const totalTime = prepareTime + (workTime * rounds) + (restTime * (rounds - 1));
     const minutes = Math.floor(totalTime / 60);
     const seconds = totalTime % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -176,229 +192,240 @@ function HIITTimer() {
   };
 
   const getIntensityLevel = () => {
-    if (workTime <= 15) return 'EXTREME';
-    if (workTime <= 25) return 'HIGH';
-    if (workTime <= 35) return 'MODERATE';
-    return 'ENDURANCE';
+    // This logic might need refinement based on actual fitness standards
+    // For simplicity, let's use a rough ratio of work to rest and work time itself
+    const ratio = workTime / (workTime + restTime);
+    if (workTime <= 20 && ratio >= 0.5) return 'EXTREME'; // E.g., Tabata
+    if (workTime <= 30 && ratio >= 0.4) return 'HIGH';
+    if (workTime <= 45 && ratio >= 0.3) return 'MODERATE';
+    return 'ENDURANCE'; // Longer work, shorter rest usually
   };
 
   return (
-    <div className="max-w-md mx-auto">
-      <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
-        <CardContent className="p-8 text-center">
-          {showSettings && currentPhase === 'prepare' && !isRunning ? (
-            <div className="mb-8">
-              <h3 className="text-lg font-semibold mb-4">HIIT Protocol</h3>
-              
-              <div className="mb-6">
-                <Label htmlFor="protocol" className="text-sm">Choose Protocol</Label>
-                <Select value={selectedProtocol.name} onValueChange={handleProtocolChange}>
-                  <SelectTrigger className="w-full mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {hiitProtocols.map(protocol => (
-                      <SelectItem key={protocol.name} value={protocol.name}>
-                        {protocol.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="text-xs text-gray-500 mt-1">
-                  {selectedProtocol.description}
-                </div>
-              </div>
+    <> {/* Use a React Fragment to wrap Helmet and your main div */}
+      <Helmet>
+        <title>HIIT Timer - High-Intensity Interval Training | Timer Central</title>
+        <meta name="description" content="Free online HIIT timer for high-intensity interval training workouts. Customize work, rest, rounds, and prepare times for Tabata, sprint, and endurance intervals."></meta>
+        {/* You can add more meta tags here if needed for HIIT Timer */}
+      </Helmet>
 
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <Label htmlFor="workTime" className="text-sm">Work Time (sec)</Label>
-                  <Input
-                    id="workTime"
-                    type="number"
-                    min="5"
-                    max="300"
-                    value={workTime}
-                    onChange={(e) => setWorkTime(Math.max(5, Math.min(300, parseInt(e.target.value) || 20)))}
-                    className="text-center"
-                    disabled={selectedProtocol.name !== 'Custom'}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="restTime" className="text-sm">Rest Time (sec)</Label>
-                  <Input
-                    id="restTime"
-                    type="number"
-                    min="5"
-                    max="180"
-                    value={restTime}
-                    onChange={(e) => setRestTime(Math.max(5, Math.min(180, parseInt(e.target.value) || 10)))}
-                    className="text-center"
-                    disabled={selectedProtocol.name !== 'Custom'}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="rounds" className="text-sm">Rounds</Label>
-                  <Input
-                    id="rounds"
-                    type="number"
-                    min="1"
-                    max="30"
-                    value={rounds}
-                    onChange={(e) => setRounds(Math.max(1, Math.min(30, parseInt(e.target.value) || 8)))}
-                    className="text-center"
-                    disabled={selectedProtocol.name !== 'Custom'}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="prepareTime" className="text-sm">Prepare (sec)</Label>
-                  <Input
-                    id="prepareTime"
-                    type="number"
-                    min="5"
-                    max="60"
-                    value={prepareTime}
-                    onChange={(e) => setPrepareTime(Math.max(5, Math.min(60, parseInt(e.target.value) || 10)))}
-                    className="text-center"
-                  />
-                </div>
-              </div>
+      <div className="max-w-md mx-auto">
+        <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
+          <CardContent className="p-8 text-center">
+            {showSettings && currentPhase === 'prepare' && !isRunning ? (
+              <div className="mb-8">
+                <h3 className="text-lg font-semibold mb-4">HIIT Protocol</h3>
 
-              <div className="bg-gray-50 p-4 rounded-lg text-sm">
-                <div className="flex justify-between items-center mb-2">
-                  <span>Total Workout Time:</span>
-                  <span className="font-bold">{getTotalWorkoutTime()}</span>
+                <div className="mb-6">
+                  <Label htmlFor="protocol" className="text-sm">Choose Protocol</Label>
+                  <Select value={selectedProtocol.name} onValueChange={handleProtocolChange}>
+                    <SelectTrigger className="w-full mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {hiitProtocols.map(protocol => (
+                        <SelectItem key={protocol.name} value={protocol.name}>
+                          {protocol.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {selectedProtocol.description}
+                  </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span>Intensity Level:</span>
-                  <span className={`font-bold ${
-                    getIntensityLevel() === 'EXTREME' ? 'text-red-600' :
-                    getIntensityLevel() === 'HIGH' ? 'text-orange-600' :
-                    getIntensityLevel() === 'MODERATE' ? 'text-blue-600' : 'text-green-600'
-                  }`}>
-                    {getIntensityLevel()}
-                  </span>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <Label htmlFor="workTime" className="text-sm">Work Time (sec)</Label>
+                    <Input
+                      id="workTime"
+                      type="number"
+                      min="5"
+                      max="300"
+                      value={workTime}
+                      onChange={(e) => setWorkTime(Math.max(5, Math.min(300, parseInt(e.target.value) || 20)))}
+                      className="text-center"
+                      disabled={selectedProtocol.name !== 'Custom'}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="restTime" className="text-sm">Rest Time (sec)</Label>
+                    <Input
+                      id="restTime"
+                      type="number"
+                      min="5"
+                      max="180"
+                      value={restTime}
+                      onChange={(e) => setRestTime(Math.max(5, Math.min(180, parseInt(e.target.value) || 10)))}
+                      className="text-center"
+                      disabled={selectedProtocol.name !== 'Custom'}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="rounds" className="text-sm">Rounds</Label>
+                    <Input
+                      id="rounds"
+                      type="number"
+                      min="1"
+                      max="30"
+                      value={rounds}
+                      onChange={(e) => setRounds(Math.max(1, Math.min(30, parseInt(e.target.value) || 8)))}
+                      className="text-center"
+                      disabled={selectedProtocol.name !== 'Custom'}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="prepareTime" className="text-sm">Prepare (sec)</Label>
+                    <Input
+                      id="prepareTime"
+                      type="number"
+                      min="5"
+                      max="60"
+                      value={prepareTime}
+                      onChange={(e) => setPrepareTime(Math.max(5, Math.min(60, parseInt(e.target.value) || 10)))}
+                      className="text-center"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-lg text-sm">
+                  <div className="flex justify-between items-center mb-2">
+                    <span>Total Workout Time:</span>
+                    <span className="font-bold">{getTotalWorkoutTime()}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Intensity Level:</span>
+                    <span className={`font-bold ${
+                      getIntensityLevel() === 'EXTREME' ? 'text-red-600' :
+                      getIntensityLevel() === 'HIGH' ? 'text-orange-600' :
+                      getIntensityLevel() === 'MODERATE' ? 'text-blue-600' : 'text-green-600'
+                    }`}>
+                      {getIntensityLevel()}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <>
-              <div className="mb-4">
-                <div className={`flex items-center justify-center gap-2 text-xl font-bold mb-2 px-4 py-2 rounded-lg ${getPhaseColor()}`}>
-                  {getPhaseIcon()}
-                  {getPhaseText()}
+            ) : (
+              <>
+                <div className="mb-4">
+                  <div className={`flex items-center justify-center gap-2 text-xl font-bold mb-2 px-4 py-2 rounded-lg ${getPhaseColor()}`}>
+                    {getPhaseIcon()}
+                    {getPhaseText()}
+                  </div>
+                  {currentPhase !== 'prepare' && currentPhase !== 'finished' && (
+                    <div className="text-lg text-gray-600">
+                      Round {currentRound} of {rounds}
+                    </div>
+                  )}
                 </div>
-                {currentPhase !== 'prepare' && currentPhase !== 'finished' && (
-                  <div className="text-lg text-gray-600">
-                    Round {currentRound} of {rounds}
+
+                <div className="mb-8">
+                  <div className="text-6xl font-mono font-bold text-gray-900 mb-2">
+                    {timeLeft.toString().padStart(2, '0')}
+                  </div>
+                  <div className="text-gray-500">seconds</div>
+                </div>
+
+                {currentPhase !== 'finished' && currentPhase !== 'prepare' && (
+                  <>
+                    <div className="mb-6">
+                      <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div
+                          className={`h-3 rounded-full transition-all duration-1000 ${
+                            currentPhase === 'work' ? 'bg-red-500' : 'bg-green-500'
+                          }`}
+                          style={{
+                            width: `${currentPhase === 'work'
+                              ? ((workTime - timeLeft) / workTime) * 100
+                              : ((restTime - timeLeft) / restTime) * 100
+                            }%`
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mb-6 text-sm text-gray-600">
+                      <div className="flex justify-center gap-6">
+                        <div className="text-center">
+                          <div className="font-semibold text-red-600">{workTime}s</div>
+                          <div>Work</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-semibold text-green-600">{restTime}s</div>
+                          <div>Rest</div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {currentRound > 0 && currentPhase !== 'finished' && (
+                  <div className="mb-6">
+                    <div className="flex justify-center gap-1">
+                      {Array.from({ length: rounds }, (_, i) => (
+                        <div
+                          key={i}
+                          className={`w-2 h-2 rounded-full ${
+                            i < currentRound - 1
+                              ? 'bg-purple-500'
+                              : i === currentRound - 1
+                                ? currentPhase === 'work'
+                                  ? 'bg-red-500 animate-pulse'
+                                  : 'bg-green-500 animate-pulse'
+                                : 'bg-gray-300'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Round Progress</div>
                   </div>
                 )}
-              </div>
-              
-              <div className="mb-8">
-                <div className="text-6xl font-mono font-bold text-gray-900 mb-2">
-                  {timeLeft.toString().padStart(2, '0')}
-                </div>
-                <div className="text-gray-500">seconds</div>
-              </div>
-              
-              {currentPhase !== 'finished' && currentPhase !== 'prepare' && (
-                <>
-                  <div className="mb-6">
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div 
-                        className={`h-3 rounded-full transition-all duration-1000 ${
-                          currentPhase === 'work' ? 'bg-red-500' : 'bg-green-500'
-                        }`}
-                        style={{
-                          width: `${currentPhase === 'work' 
-                            ? ((workTime - timeLeft) / workTime) * 100
-                            : ((restTime - timeLeft) / restTime) * 100
-                          }%`
-                        }}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div className="mb-6 text-sm text-gray-600">
-                    <div className="flex justify-center gap-6">
-                      <div className="text-center">
-                        <div className="font-semibold text-red-600">{workTime}s</div>
-                        <div>Work</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="font-semibold text-green-600">{restTime}s</div>
-                        <div>Rest</div>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-              
-              {currentRound > 0 && currentPhase !== 'finished' && (
-                <div className="mb-6">
-                  <div className="flex justify-center gap-1">
-                    {Array.from({ length: rounds }, (_, i) => (
-                      <div
-                        key={i}
-                        className={`w-2 h-2 rounded-full ${
-                          i < currentRound - 1
-                            ? 'bg-purple-500'
-                            : i === currentRound - 1
-                              ? currentPhase === 'work' 
-                                ? 'bg-red-500 animate-pulse'
-                                : 'bg-green-500 animate-pulse'
-                              : 'bg-gray-300'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">Round Progress</div>
-                </div>
-              )}
-            </>
-          )}
-          
-          <div className="flex justify-center gap-4">
-            <Button
-              onClick={handleStart}
-              size="lg"
-              disabled={currentPhase === 'finished'}
-              className={`w-16 h-16 rounded-full ${
-                isRunning 
-                  ? 'bg-red-500 hover:bg-red-600' 
-                  : 'bg-green-500 hover:bg-green-600'
-              }`}
-            >
-              {isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-            </Button>
-            
-            <Button
-              onClick={handleReset}
-              size="lg"
-              variant="outline"
-              className="w-16 h-16 rounded-full"
-            >
-              <RotateCcw className="w-6 h-6" />
-            </Button>
-          </div>
-          
-          <div className="mt-6 text-sm text-gray-600">
-            <p>
-              {currentPhase === 'finished' 
-                ? '🔥 HIIT workout crushed! Amazing work!' 
-                : isRunning 
-                  ? currentPhase === 'work' 
-                    ? 'Push yourself! 💪' 
-                    : currentPhase === 'rest' 
-                      ? 'Keep moving, stay loose 🚶‍♂️'
-                      : 'Get ready to dominate!'
-                  : 'Ready to unleash the intensity'
-              }
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+              </>
+            )}
+
+            <div className="flex justify-center gap-4">
+              <Button
+                onClick={handleStart}
+                size="lg"
+                disabled={currentPhase === 'finished'}
+                className={`w-16 h-16 rounded-full ${
+                  isRunning
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : 'bg-green-500 hover:bg-green-600'
+                }`}
+              >
+                {isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+              </Button>
+
+              <Button
+                onClick={handleReset}
+                size="lg"
+                variant="outline"
+                className="w-16 h-16 rounded-full"
+              >
+                <RotateCcw className="w-6 h-6" />
+              </Button>
+            </div>
+
+            <div className="mt-6 text-sm text-gray-600">
+              <p>
+                {currentPhase === 'finished'
+                  ? '🔥 HIIT workout crushed! Amazing work!'
+                  : isRunning
+                    ? currentPhase === 'work'
+                      ? 'Push yourself! 💪'
+                      : currentPhase === 'rest'
+                        ? 'Keep moving, stay loose 🚶‍♂️'
+                        : 'Get ready to dominate!'
+                    : 'Ready to unleash the intensity'
+                }
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </>
   );
 }
 

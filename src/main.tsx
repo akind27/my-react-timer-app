@@ -1,8 +1,8 @@
-
 import './logger.ts';
 import { StrictMode, useEffect, useState, useRef, createContext, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HelmetProvider } from 'react-helmet-async';
 
 import Fallback from "./Fallback.tsx";
 import SystemErrorBoundary from "./SystemErrorBoundary.tsx";
@@ -17,21 +17,21 @@ const Root = () => {
   Element.prototype.scrollBy = function() { return false; };
 
   return (
-    <>
-        <BrowserRouter>
-          <Routes>
-            <Route path="*" element={
-              <SystemErrorBoundary viewName="Fallback">
-                <Suspense fallback={<div>Loading...</div>}>
-                  <Router />
-                </Suspense>
-              </SystemErrorBoundary>
-            } />
-          </Routes>
-        </BrowserRouter>
+    <HelmetProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="*" element={
+            <SystemErrorBoundary viewName="Fallback">
+              <Suspense fallback={<div>Loading...</div>}>
+                <Router />
+              </Suspense>
+            </SystemErrorBoundary>
+          } />
+        </Routes>
+      </BrowserRouter>
       <ScreenshotComponent />
-    </>
+    </HelmetProvider>
   )
 }
 
-createRoot(document.getElementById("root")).render(<Root />);
+createRoot(document.getElementById("root")!).render(<Root />);

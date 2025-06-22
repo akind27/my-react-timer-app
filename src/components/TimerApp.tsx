@@ -1,18 +1,14 @@
-import React, { useState } from 'react';
+// src/components/TimerApp.tsx
+import React from 'react';
+import { Link } from 'react-router-dom'; // <--- We need Link now!
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+// No need for Button, Clock, Timer, etc. imports from lucide-react if only showing cards here
+// No need for individual timer imports (Stopwatch, CountdownTimer, etc.) as they are handled in Router.tsx now
+
+// You still need these icon imports for the cards themselves
 import { Clock, Timer, Zap, Coffee, Dumbbell, Users, Target, Gamepad2 } from 'lucide-react';
-import Stopwatch from './timers/Stopwatch';
-import CountdownTimer from './timers/CountdownTimer';
-import TabataTimer from './timers/TabataTimer';
-import PomodoroTimer from './timers/PomodoroTimer';
-import IntervalTimer from './timers/IntervalTimer';
-import BoxingTimer from './timers/BoxingTimer';
-import HIITTimer from './timers/HIITTimer';
-import ChessTimer from './timers/ChessTimer';
 
-type TimerType = 'stopwatch' | 'countdown' | 'tabata' | 'pomodoro' | 'interval' | 'boxing' | 'hiit' | 'chess' | null;
-
+// This part remains the same, it defines your timers for the cards
 const timerOptions = [
   { id: 'stopwatch', name: 'Stopwatch', icon: Clock, description: 'Simple stopwatch with start, stop, and reset' },
   { id: 'countdown', name: 'Countdown Timer', icon: Timer, description: 'Set a countdown and get notified when time is up' },
@@ -25,54 +21,11 @@ const timerOptions = [
 ];
 
 function TimerApp() {
-  const [selectedTimer, setSelectedTimer] = useState<TimerType>(null);
+  // **REMOVE** const [selectedTimer, setSelectedTimer] = useState<TimerType>(null);
+  // **REMOVE** const renderTimer = () => { ... } switch statement
+  // **REMOVE** if (selectedTimer) { ... } block
 
-  const renderTimer = () => {
-    switch (selectedTimer) {
-      case 'stopwatch':
-        return <Stopwatch />;
-      case 'countdown':
-        return <CountdownTimer />;
-      case 'tabata':
-        return <TabataTimer />;
-      case 'pomodoro':
-        return <PomodoroTimer />;
-      case 'interval':
-        return <IntervalTimer />;
-      case 'boxing':
-        return <BoxingTimer />;
-      case 'hiit':
-        return <HIITTimer />;
-      case 'chess':
-        return <ChessTimer />;
-      default:
-        return null;
-    }
-  };
-
-  if (selectedTimer) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-bold text-gray-900">
-              {timerOptions.find(t => t.id === selectedTimer)?.name}
-            </h1>
-            <Button 
-              variant="outline" 
-              onClick={() => setSelectedTimer(null)}
-              className="flex items-center gap-2"
-            >
-              <Users className="w-4 h-4" />
-              Back to Timers
-            </Button>
-          </div>
-          {renderTimer()}
-        </div>
-      </div>
-    );
-  }
-
+  // This is the only part that will remain and be returned: the grid of cards
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-6xl mx-auto">
@@ -80,26 +33,32 @@ function TimerApp() {
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Timer Central</h1>
           <p className="text-lg text-gray-600">Professional timing tools for every need</p>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {timerOptions.map((timer) => {
             const IconComponent = timer.icon;
             return (
-              <Card 
-                key={timer.id} 
-                className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-blue-300"
-                onClick={() => setSelectedTimer(timer.id as TimerType)}
+              // *** CHANGE HERE: Use <Link> instead of onClick and style it ***
+              <Link
+                key={timer.id}
+                to={`/${timer.id}`} // The new URL for this timer (e.g., /stopwatch)
+                style={{ textDecoration: 'none', color: 'inherit' }} // Remove underline and keep color
               >
-                <CardHeader className="text-center pb-3">
-                  <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-3">
-                    <IconComponent className="w-8 h-8 text-blue-600" />
-                  </div>
-                  <CardTitle className="text-xl text-gray-900">{timer.name}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-600 text-center text-sm">{timer.description}</p>
-                </CardContent>
-              </Card>
+                <Card
+                  className="hover:shadow-lg transition-shadow cursor-pointer border-2 hover:border-blue-300"
+                  // **REMOVE** onClick={() => setSelectedTimer(timer.id as TimerType)}
+                >
+                  <CardHeader className="text-center pb-3">
+                    <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-3">
+                      <IconComponent className="w-8 h-8 text-blue-600" />
+                    </div>
+                    <CardTitle className="text-xl text-gray-900">{timer.name}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-gray-600 text-center text-sm">{timer.description}</p>
+                  </CardContent>
+                </Card>
+              </Link>
             );
           })}
         </div>
