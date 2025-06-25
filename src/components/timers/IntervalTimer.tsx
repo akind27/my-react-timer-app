@@ -9,7 +9,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Plus, Minus } from 'lucide-react';
 
-import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
+import { useSound } from '../Router'; // Keep this for phase transition sounds
 
 type Phase = 'work' | 'rest' | 'finished';
 
@@ -35,99 +35,125 @@ function IntervalTimer() {
 
   // Refs for intervals, one for the main game timer, one for the game-over alarm loop
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
-  // Get playAlarm and stopAlarm from the global SoundContext
-  const { playAlarm, stopAlarm } = useSound();
+  // Get playAlarm from the global SoundContext for *phase transitions*
+  const { playAlarm } = useSound();
 
-  // --- Alarm Looping Control Functions (Similar to other timers) ---
-  const startAlarmLoop = useCallback(() => {
-    // Stop any existing alarm loop first
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
-    }
-    playAlarm(); // Play the alarm immediately
+  // --- Dedicated HTMLAudioElement for the Looping "Finished" Alarm ---
+  const finishedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const finishedAlarmIntervalRef = useRef<NodeJS.Timeout | null>(null); // Interval to re-trigger if autoplay blocked
 
-    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
-    alarmLoopIntervalRef.current = setInterval(() => {
-      playAlarm(); // Keep trying to play the alarm
-    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
-  }, [playAlarm]);
-
-  const stopAlarmLoop = useCallback(() => {
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
-      alarmLoopIntervalRef.current = null;
-    }
-    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
-  }, [stopAlarm]);
-
-  // Effect for main timer logic
+  // Initialize finished audio element once on component mount
   useEffect(() => {
-    if (isRunning && timeLeft > 0) {
-      intervalRef.current = setInterval(() => {
-        setTimeLeft(prevTime => {
-          if (prevTime <= 1) { // Check for 1 second remaining
-            handlePhaseTransition();
-            return 0;
-          }
-          return prevTime - 1;
-        });
-      }, 1000);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      // If timer is stopped and it's in the finished phase, start looping alarm
-      if (!isRunning && currentPhase === 'finished') {
-        startAlarmLoop();
-      } else {
-        stopAlarmLoop(); // Otherwise, stop any alarm loop
-      }
+    console.log("[IntervalTimer Init Effect] Initializing finished audio element.");
+    if (!finishedAudioRef.current) {
+      finishedAudioRef.current = new Audio('/sounds/FinishedAlarm.mp3'); // Path to your looping sound
+      finishedAudioRef.current.volume = 0.7;
+      finishedAudioRef.current.loop = true; // CRUCIAL for looping
+      finishedAudioRef.current.preload = 'auto';
+      finishedAudioRef.current.load();
     }
 
-    // Cleanup function: Clear interval and stop alarm loop when component unmounts
+    // Component unmount cleanup: stop all sounds and clear intervals
     return () => {
+      console.log("[IntervalTimer Component Unmount Cleanup] Stopping all sounds and clearing intervals.");
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
-      stopAlarmLoop();
+      // Ensure the finished alarm is stopped and reset
+      if (finishedAudioRef.current) {
+        finishedAudioRef.current.pause();
+        finishedAudioRef.current.currentTime = 0;
+      }
+      if (finishedAlarmIntervalRef.current) {
+        clearInterval(finishedAlarmIntervalRef.current);
+        finishedAlarmIntervalRef.current = null;
+      }
+      // No need to call stopAlarm() from context here, as it's not the looping sound.
     };
-  }, [isRunning, timeLeft, isPreparing, currentPhase, currentSet, totalSets, intervals, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Add all dependencies
+  }, []); // Runs once on mount, cleanup on unmount
+
+
+  // --- Functions for Looping "Finished" Alarm ONLY ---
+  const startFinishedLoop = useCallback(() => {
+    console.log("IntervalTimer: Attempting to start finished loop.");
+    // Stop any existing alarm loop first
+    if (finishedAlarmIntervalRef.current) {
+      clearInterval(finishedAlarmIntervalRef.current);
+      finishedAlarmIntervalRef.current = null;
+    }
+
+    if (finishedAudioRef.current) {
+      // Only play if not already playing or has been stopped
+      if (finishedAudioRef.current.paused || finishedAudioRef.current.ended) {
+        finishedAudioRef.current.currentTime = 0; // Ensure it starts from beginning
+        finishedAudioRef.current.play().catch(e => {
+          console.error("IntervalTimer Finished sound loop play failed (likely autoplay block):", e);
+        });
+      }
+      // Set an interval to re-trigger play if it stops (browser autoplay policy, or if user stops it manually)
+      finishedAlarmIntervalRef.current = setInterval(() => {
+        if (finishedAudioRef.current && (finishedAudioRef.current.paused || finishedAudioRef.current.ended)) {
+          finishedAudioRef.current.currentTime = 0;
+          finishedAudioRef.current.play().catch(e => {
+            console.error("IntervalTimer Finished sound re-trigger failed:", e);
+          });
+        }
+      }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+    }
+  }, []);
+
+  const stopFinishedLoop = useCallback(() => {
+    console.log("IntervalTimer: Stopping finished loop sound.");
+    if (finishedAlarmIntervalRef.current) {
+      clearInterval(finishedAlarmIntervalRef.current);
+      finishedAlarmIntervalRef.current = null;
+    }
+    if (finishedAudioRef.current) {
+      finishedAudioRef.current.pause();
+      finishedAudioRef.current.currentTime = 0;
+    }
+  }, []);
 
   // This effect ensures initial prepare time is set when entering settings or resetting
   useEffect(() => {
-    if (isPreparing && showSettings) {
+    // Only update timeLeft if not running and we are in settings or preparing
+    // This prevents accidental reset of time if user tweaks settings while timer is running
+    if (!isRunning && (showSettings || isPreparing)) {
       setTimeLeft(prepareTime);
     }
-  }, [isPreparing, showSettings, prepareTime]);
+  }, [isPreparing, showSettings, prepareTime, isRunning]); // Added isRunning dependency for precision
 
 
+  // --- Phase Transition Logic (MOVED UP for correct access) ---
   const handlePhaseTransition = useCallback(() => {
-    playAlarm(); // Use global alarm for phase transitions
+    playAlarm(); // Use global alarm for phase transitions (short, distinct sound)
 
     if (isPreparing) {
       setIsPreparing(false);
       setCurrentSet(1); // Start with the first set
       setCurrentInterval(0); // Start with the first interval definition
       setCurrentPhase('work');
-      setTimeLeft(intervals[0].workTime);
+      setTimeLeft(intervals[0]?.workTime || 0); // Use optional chaining and fallback
     } else if (currentPhase === 'work') {
       setCurrentPhase('rest');
-      setTimeLeft(intervals[currentInterval].restTime);
+      setTimeLeft(intervals[currentInterval]?.restTime || 0); // Use optional chaining and fallback
     } else if (currentPhase === 'rest') {
       const nextIntervalIndex = (currentInterval + 1) % intervals.length;
 
-      // If we're at the last interval definition and it's the last set, finish
-      if (currentSet >= totalSets && nextIntervalIndex === 0) {
+      // Check if we've completed all intervals in the current set and are at the last set
+      // This is the condition for finishing the entire workout
+      if (nextIntervalIndex === 0 && currentSet >= totalSets) {
         setCurrentPhase('finished');
-        setIsRunning(false);
-        setTimeLeft(0);
-        startAlarmLoop(); // Workout finished, start looping alarm
+        setIsRunning(false); // Stop the main timer
+        setTimeLeft(0); // Ensure time is 0 for finished state
+        // The main useEffect will pick up currentPhase === 'finished' and !isRunning to start the alarm loop.
       } else {
+        // Move to the next interval or next set
         setCurrentPhase('work');
         setCurrentInterval(nextIntervalIndex);
-        setTimeLeft(intervals[nextIntervalIndex].workTime);
+        setTimeLeft(intervals[nextIntervalIndex]?.workTime || 0); // Use optional chaining and fallback
 
         // Increment set only if we're looping back to the first interval definition
         if (nextIntervalIndex === 0) {
@@ -135,74 +161,131 @@ function IntervalTimer() {
         }
       }
     }
-  }, [currentInterval, currentPhase, currentSet, intervals, totalSets, isPreparing, playAlarm, startAlarmLoop]);
+  }, [currentInterval, currentPhase, currentSet, intervals, totalSets, isPreparing, playAlarm]);
+
+
+  // Main timer logic effect
+  useEffect(() => {
+    if (isRunning && timeLeft > 0) {
+      // Clear any existing interval before setting a new one
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      intervalRef.current = setInterval(() => {
+        setTimeLeft(prevTime => {
+          if (prevTime <= 1) { // Check for 1 second remaining
+            handlePhaseTransition(); // Call the transition
+            return 0; // Ensure time goes to 0
+          }
+          return prevTime - 1;
+        });
+      }, 1000);
+    } else {
+      // If timer is paused or stopped (timeLeft is 0 or isRunning is false)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+
+      // ONLY manage the *looping finished alarm* when currentPhase is 'finished' AND not running
+      if (!isRunning && currentPhase === 'finished') {
+        console.log("[IntervalTimer Main Effect] Timer stopped and phase is 'finished'. Starting finished alarm loop.");
+        startFinishedLoop();
+      } else {
+        // Otherwise, ensure the finished alarm loop is stopped
+        console.log("[IntervalTimer Main Effect] Not in 'finished' phase or timer is running. Stopping finished alarm loop.");
+        stopFinishedLoop();
+      }
+    }
+
+    // Cleanup function: Clear interval and stop finished alarm loop when component unmounts or dependencies change
+    return () => {
+      console.log("[IntervalTimer Main Effect Cleanup]");
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      stopFinishedLoop(); // Always stop the looping alarm on cleanup
+    };
+  }, [isRunning, timeLeft, isPreparing, currentPhase, currentSet, totalSets, intervals, handlePhaseTransition, startFinishedLoop, stopFinishedLoop]); // Re-evaluate dependencies carefully
 
 
   const handleStart = () => {
-    if (currentPhase === 'finished' && !isRunning) { // If finished, allow restarting the workout
-      handleReset(); // Reset the state to allow a fresh start
-      return; // handleReset will trigger the prepare phase
+    if (currentPhase === 'finished' && !isRunning) {
+      // If finished and user clicks start, reset and then start.
+      // handleReset will set isRunning to false, isPreparing to true.
+      // The subsequent logic will correctly re-start from prepare.
+      handleReset();
+      // After reset, the state will be isPreparing=true, isRunning=false.
+      // We need to explicitly set isRunning to true to start the timer after reset.
+      setTimeout(() => setIsRunning(true), 0); // Small delay to allow state update
+      setShowSettings(false); // Hide settings immediately on start
+      return;
     }
 
-    if ((isPreparing || timeLeft === 0) && !isRunning) { // Start prepare or restart if timer finished
-      setTimeLeft(prepareTime); // Ensure prepare time is set
-      setIsRunning(true);
-      setShowSettings(false);
-      setIsPreparing(true); // Explicitly ensure prepare phase starts on first play
-      stopAlarmLoop(); // Ensure alarm is off when starting
-    } else { // If already running or paused (but not finished)
-      setIsRunning(prev => !prev);
-      if (isRunning) { // If it was running and is now paused
-        stopAlarmLoop(); // Stop alarm if pausing a finished workout
+    setIsRunning(prev => {
+      const newState = !prev;
+      if (!prev && showSettings) { // If was paused/settings shown, and now starting
+        setShowSettings(false); // Hide settings
+        setIsPreparing(true); // Ensure prepare phase starts
+        setTimeLeft(prepareTime); // Set prepare time
       }
-    }
+      if (prev && currentPhase === 'finished') { // If pausing a finished workout
+        stopFinishedLoop();
+      }
+      return newState;
+    });
   };
 
   const handleReset = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
     setIsRunning(false);
-    setCurrentPhase('work'); // Set to 'work' initially, will be overridden by isPreparing
+    setCurrentPhase('work'); // This will be immediately overridden by isPreparing to 'prepare' visual
     setCurrentSet(0);
     setCurrentInterval(0);
-    setTimeLeft(0); // Set time left to 0, prepare effect will set it to prepareTime
+    setTimeLeft(0); // This will be overridden by the prepare effect to 'prepareTime'
     setIsPreparing(true); // Go back to preparing state
     setShowSettings(true); // Show settings on reset
-    // Reset intervals and total sets to initial defaults
+    // Reset intervals and total sets to initial defaults (important if settings were changed)
     setIntervals([{ workTime: 30, restTime: 15 }]);
     setTotalSets(5);
     setPrepareTime(10);
-    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
+    stopFinishedLoop(); // Crucial: Stop the looping finished alarm on reset
   };
 
   const addInterval = () => {
     setIntervals([...intervals, { workTime: 30, restTime: 15 }]);
-    if (showSettings === false) handleReset(); // If in active timer, reset on add/remove interval
+    // It's generally better not to implicitly call handleReset here.
+    // The user will reset if they feel the need after changing settings.
+    // if (showSettings === false) handleReset();
   };
 
   const removeInterval = (index: number) => {
     if (intervals.length > 1) {
       setIntervals(intervals.filter((_, i) => i !== index));
     }
-    if (showSettings === false) handleReset(); // If in active timer, reset on add/remove interval
+    // if (showSettings === false) handleReset();
   };
 
   const updateInterval = (index: number, field: 'workTime' | 'restTime', value: number) => {
     const newIntervals = [...intervals];
     newIntervals[index][field] = Math.max(1, value); // Minimum 1 second
     setIntervals(newIntervals);
-    if (showSettings === false) handleReset(); // If in active timer, reset on interval value change
+    // if (showSettings === false) handleReset();
   };
 
   const handleTotalSetsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTotalSets(Math.max(1, parseInt(e.target.value) || 5));
-    if (showSettings === false) handleReset(); // Reset if changing during active timer
+    // if (showSettings === false) handleReset();
   };
 
   const handlePrepareTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setPrepareTime(Math.max(1, parseInt(e.target.value) || 10));
-    if (showSettings === false) handleReset(); // Reset if changing during active timer
+    // if (showSettings === false) handleReset();
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -231,9 +314,11 @@ function IntervalTimer() {
     }
   };
 
-  const getCurrentIntervalData = () => {
-    return intervals[currentInterval] || { workTime: 0, restTime: 0 }; // Return current interval, or fallback
-  };
+  const getCurrentIntervalData = useCallback(() => {
+    // Ensure intervals[currentInterval] exists to prevent errors
+    return intervals[currentInterval] || { workTime: 0, restTime: 0 };
+  }, [intervals, currentInterval]);
+
 
   return (
     <> {/* Use a React Fragment to wrap Helmet and your main div */}
@@ -384,14 +469,17 @@ function IntervalTimer() {
               <Button
                 onClick={handleStart}
                 size="lg"
-                disabled={currentPhase === 'finished' && !isPreparing} // Disable if finished and not in prepare mode to restart
+                // The disabled condition needs to be adjusted. If finished, clicking "Start" should reset.
+                // It's not disabled, but its action changes.
+                // disabled={currentPhase === 'finished' && !isPreparing} // This made it unclickable when finished
                 className={`w-16 h-16 rounded-full ${
                   isRunning
                     ? 'bg-red-500 hover:bg-red-600'
                     : 'bg-green-500 hover:bg-green-600'
                 }`}
               >
-                {isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                {/* Change button text if finished for clarity */}
+                {currentPhase === 'finished' ? 'Restart' : (isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />)}
               </Button>
 
               <Button
@@ -402,6 +490,18 @@ function IntervalTimer() {
               >
                 <RotateCcw className="w-6 h-6" />
               </Button>
+
+              {/* Show settings button only when not running and settings are currently hidden */}
+              {!isRunning && !showSettings && (
+                <Button
+                  onClick={() => setShowSettings(true)}
+                  size="lg"
+                  variant="outline"
+                  className="w-16 h-16 rounded-full"
+                >
+                  <Settings className="w-6 h-6" />
+                </Button>
+              )}
             </div>
 
             <div className="mt-6 text-sm text-gray-600">
@@ -413,6 +513,16 @@ function IntervalTimer() {
                     : 'Ready to start'
                 }
               </p>
+            </div>
+            {/* Descriptive Text for Interval Timer */}
+            <div className="mt-8 text-center text-gray-700 max-w-prose mx-auto">
+                <h3 className="text-xl font-semibold mb-2">Master Your Workouts with the Interval Timer</h3>
+                <p className="mb-2">
+                    The Interval Timer is your essential tool for structured high-intensity interval training (HIIT), circuit training, or any workout requiring precise timed segments. Set custom work and rest periods for multiple intervals, define the total number of sets, and include a preparation countdown to get you ready.
+                </p>
+                <p>
+                    This versatile timer allows you to create dynamic workout routines, ensuring you maximize your effort during work phases and recover effectively during rest periods. Stay on track with clear visual and audio cues, helping you maintain focus and push through every set.
+                </p>
             </div>
           </CardContent>
         </Card>

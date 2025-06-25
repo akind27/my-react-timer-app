@@ -9,7 +9,8 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Settings, Coffee, Clock } from 'lucide-react';
 
-import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
+import { useSound } from '../Router'; // Keep this for phase transition sounds
+
 
 type Phase = 'work' | 'shortBreak' | 'longBreak' | 'finished';
 
@@ -27,33 +28,74 @@ function PomodoroTimer() {
   const [completedSessions, setCompletedSessions] = useState(0); // Total completed work sessions across all cycles
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
+  const finishedAlarmIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for looping finished alarm
 
-  // Get playAlarm and stopAlarm from the global SoundContext
-  const { playAlarm, stopAlarm } = useSound();
+  // Get playAlarm and stopAlarm from the global SoundContext for phase transitions
+  const { playAlarm } = useSound(); // Only need playAlarm from context for *transition* sounds
 
+  // --- Dedicated HTMLAudioElement for the Looping "Finished" Alarm ---
+  const finishedAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // --- Alarm Looping Control Functions (Similar to other timers) ---
-  const startAlarmLoop = useCallback(() => {
-    // Stop any existing alarm loop first
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
+  // Initialize finished audio element once on component mount
+  useEffect(() => {
+    console.log("[PomodoroTimer Init Effect] Initializing finished audio element.");
+
+    if (!finishedAudioRef.current) {
+      finishedAudioRef.current = new Audio('/sounds/FinishedAlarm.mp3'); // A longer, looping alarm
+      finishedAudioRef.current.volume = 0.7;
+      finishedAudioRef.current.loop = true; // CRUCIAL for looping
+      finishedAudioRef.current.preload = 'auto';
+      finishedAudioRef.current.load();
     }
-    playAlarm(); // Play the alarm immediately
 
-    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
-    alarmLoopIntervalRef.current = setInterval(() => {
-      playAlarm(); // Keep trying to play the alarm
-    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
-  }, [playAlarm]);
+    // Component unmount cleanup: stop all sounds and clear intervals
+    return () => {
+      console.log("[PomodoroTimer Component Unmount Cleanup] Stopping all sounds and clearing intervals.");
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      // Ensure the finished alarm is stopped and reset
+      if (finishedAudioRef.current) {
+        finishedAudioRef.current.pause();
+        finishedAudioRef.current.currentTime = 0;
+      }
+      if (finishedAlarmIntervalRef.current) {
+        clearInterval(finishedAlarmIntervalRef.current);
+        finishedAlarmIntervalRef.current = null;
+      }
+      // No need to call stopAlarm() from context here, as it's not the looping sound.
+    };
+  }, []); // Runs once on mount, cleanup on unmount
 
-  const stopAlarmLoop = useCallback(() => {
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
-      alarmLoopIntervalRef.current = null;
+
+  // --- Functions for Looping "Finished" Alarm ONLY ---
+  const startFinishedLoop = useCallback(() => {
+    if (finishedAudioRef.current) {
+      // Only play if not already playing or has been stopped
+      if (finishedAudioRef.current.paused || finishedAudioRef.current.ended) {
+        finishedAudioRef.current.currentTime = 0; // Ensure it starts from beginning
+        finishedAudioRef.current.play().catch(e => {
+          console.error("PomodoroTimer Finished sound loop play failed (likely autoplay block):", e);
+        });
+        console.log("Starting finished loop sound.");
+      }
+    } else {
+      console.log("PomodoroTimer Finished audio ref not ready.");
     }
-    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
-  }, [stopAlarm]);
+  }, []);
+
+  const stopFinishedLoop = useCallback(() => {
+    console.log("PomodoroTimer Stopping finished loop sound.");
+    if (finishedAlarmIntervalRef.current) {
+      clearInterval(finishedAlarmIntervalRef.current);
+      finishedAlarmIntervalRef.current = null;
+    }
+    if (finishedAudioRef.current) {
+      finishedAudioRef.current.pause();
+      finishedAudioRef.current.currentTime = 0;
+    }
+  }, []);
 
   // Initialize timeLeft when workTime changes (e.g., from settings) AND when not running and settings are shown
   // This ensures the displayed time updates correctly when settings are tweaked.
@@ -64,52 +106,13 @@ function PomodoroTimer() {
   }, [workTime, isRunning, showSettings]); // Only depends on these states
 
 
-  // Main timer logic effect
-  useEffect(() => {
-    if (isRunning && timeLeft > 0) {
-      intervalRef.current = setInterval(() => {
-        setTimeLeft(prevTime => {
-          if (prevTime <= 1) { // Check for 1 second remaining
-            handlePhaseTransition();
-            return 0;
-          }
-          return prevTime - 1;
-        });
-      }, 1000);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      // If timeLeft reaches 0 while running, ensure phase transition happens immediately (edge case)
-      if (isRunning && timeLeft === 0) {
-        handlePhaseTransition();
-      }
-      // If timer is stopped and it's in the finished phase, start looping alarm
-      if (!isRunning && currentPhase === 'finished') {
-        startAlarmLoop();
-      } else {
-        stopAlarmLoop(); // Otherwise, stop any alarm loop
-      }
-    }
-
-    // Cleanup function: Clear interval and stop alarm loop when component unmounts
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      stopAlarmLoop();
-    };
-  }, [isRunning, timeLeft, currentPhase, currentSession, sessionsUntilLongBreak, workTime, shortBreakTime, longBreakTime, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Added all necessary dependencies
-
-
+  // --- Phase Transition Logic (MOVED UP for correct access) ---
   const handlePhaseTransition = useCallback(() => {
-    playAlarm(); // Use global alarm for phase transitions
+    playAlarm(); // Use global alarm for phase transitions (short, distinct sound)
 
     if (currentPhase === 'work') {
       setCompletedSessions(prev => prev + 1);
       // Determine next phase after a work session
-      // A long break occurs after 'sessionsUntilLongBreak' completed work sessions.
-      // If completedSessions + 1 (the next one) is a multiple of sessionsUntilLongBreak, it's time for a long break.
       if ((completedSessions + 1) % sessionsUntilLongBreak === 0) {
         setCurrentPhase('longBreak');
         setTimeLeft(longBreakTime * 60);
@@ -121,7 +124,6 @@ function PomodoroTimer() {
       setCurrentPhase('work');
       setTimeLeft(workTime * 60);
       // Increment session count only when transitioning from a break back to work
-      // This is for display purposes: "Session X of Y"
       setCurrentSession(prev => prev % sessionsUntilLongBreak === 0 ? 1 : prev + 1);
     } else if (currentPhase === 'longBreak') {
       // After a long break, reset session count for the new cycle and start a new work phase
@@ -132,6 +134,58 @@ function PomodoroTimer() {
   }, [currentPhase, completedSessions, sessionsUntilLongBreak, longBreakTime, shortBreakTime, workTime, playAlarm]);
 
 
+  // Main timer logic effect
+  useEffect(() => {
+    if (isRunning && timeLeft > 0) {
+      // Ensure any previous interval is cleared before setting a new one
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      intervalRef.current = setInterval(() => {
+        setTimeLeft(prevTime => {
+          if (prevTime <= 1) { // Check for 1 second remaining
+            handlePhaseTransition(); // Call the transition
+            return 0; // Ensure time goes to 0
+          }
+          return prevTime - 1;
+        });
+      }, 1000);
+    } else {
+      // If timer is paused or stopped
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      // If timeLeft reaches 0 and timer was running, ensure phase transition happens immediately (edge case for manual pause just before 0)
+      // This is now redundant because handlePhaseTransition() is called when prevTime <= 1
+      // if (isRunning && timeLeft === 0 && currentPhase !== 'finished') { // Removed this as handlePhaseTransition handles it
+      //   handlePhaseTransition();
+      // }
+
+      // ONLY manage the *looping finished alarm* when currentPhase is 'finished' AND not running
+      if (!isRunning && currentPhase === 'finished') {
+        console.log("[PomodoroTimer Main Effect] Timer stopped and phase is 'finished'. Starting finished alarm loop.");
+        startFinishedLoop();
+      } else {
+        // Otherwise, ensure the finished alarm loop is stopped
+        console.log("[PomodoroTimer Main Effect] Not in 'finished' phase or timer is running. Stopping finished alarm loop.");
+        stopFinishedLoop();
+      }
+    }
+
+    // Cleanup function: Clear interval and stop finished alarm loop when component unmounts or dependencies change
+    return () => {
+      console.log("[PomodoroTimer Main Effect Cleanup]");
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      stopFinishedLoop(); // Always stop the looping alarm on cleanup
+    };
+  }, [isRunning, timeLeft, currentPhase, handlePhaseTransition, startFinishedLoop, stopFinishedLoop]); // Re-evaluate dependencies carefully
+
+
   const handleStart = () => {
     // If starting from a finished state, reset the timer first
     if (currentPhase === 'finished') {
@@ -140,7 +194,7 @@ function PomodoroTimer() {
     }
     setIsRunning(prev => {
       if (prev) { // If it was running and we're pausing
-        stopAlarmLoop();
+        stopFinishedLoop(); // Stop the finished alarm if it was playing (e.g., user paused while "finished")
       } else { // If it was paused and we're starting
         if (showSettings) { // If starting from settings, set initial time
           setTimeLeft(workTime * 60);
@@ -154,6 +208,7 @@ function PomodoroTimer() {
   const handleReset = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
     setIsRunning(false);
     setCurrentPhase('work');
@@ -161,7 +216,7 @@ function PomodoroTimer() {
     setCompletedSessions(0);
     setTimeLeft(workTime * 60); // Reset to the current workTime setting
     setShowSettings(true); // Always show settings on reset
-    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
+    stopFinishedLoop(); // Crucial: Stop the looping finished alarm on reset
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -201,9 +256,10 @@ function PomodoroTimer() {
   };
 
   // Calculate remaining sessions until the *next* long break
-  // This needs to be based on `currentSession` within the cycle, not `completedSessions`
-  const currentSessionInCycle = (completedSessions % sessionsUntilLongBreak) + 1; // 1-indexed session in current cycle
-  const remainingSessionsForDisplay = sessionsUntilLongBreak - currentSessionInCycle + (currentPhase === 'work' ? 0 : 1); // If currently on break, count the current session as "done" for the next long break calc.
+  // This needs to be based on `completedSessions`, which increments after each work phase.
+  const sessionsIntoCurrentCycle = completedSessions % sessionsUntilLongBreak;
+  const remainingSessionsForDisplay = sessionsUntilLongBreak - sessionsIntoCurrentCycle;
+
 
   return (
     <>
@@ -274,7 +330,7 @@ function PomodoroTimer() {
                   </div>
                   {currentPhase !== 'finished' && (
                     <div className="text-sm text-gray-600">
-                      Completed: {completedSessions} • Next Long Break in {remainingSessionsForDisplay}
+                      Completed: {completedSessions} {currentPhase === 'longBreak' ? '' : `• Next Long Break in ${remainingSessionsForDisplay}`}
                     </div>
                   )}
                 </div>
@@ -314,9 +370,9 @@ function PomodoroTimer() {
                       <div
                         key={i}
                         className={`w-3 h-3 rounded-full ${
-                          i < completedSessions % sessionsUntilLongBreak
+                          i < sessionsIntoCurrentCycle
                             ? 'bg-red-500' // Completed session in current cycle
-                            : i === (completedSessions % sessionsUntilLongBreak) && currentPhase === 'work' && isRunning
+                            : i === sessionsIntoCurrentCycle && currentPhase === 'work' && isRunning
                               ? 'bg-red-300 animate-pulse' // Current work session
                               : 'bg-gray-300' // Future session
                         }`}
@@ -326,10 +382,11 @@ function PomodoroTimer() {
                   {currentPhase !== 'finished' && (
                     <div className="text-xs text-gray-500 mt-1">
                       {currentPhase === 'work' ?
-                        `${sessionsUntilLongBreak - (completedSessions % sessionsUntilLongBreak)} sessions until long break` :
-                        (completedSessions % sessionsUntilLongBreak === 0 && currentPhase === 'longBreak') ?
-                        `Long break completed. Next cycle starts with session 1.` :
-                        `Next work session: ${currentSession}`}
+                        `${remainingSessionsForDisplay} sessions until long break` :
+                        (currentPhase === 'longBreak' && sessionsIntoCurrentCycle === 0) ?
+                        `Long break complete. Next cycle starts with session 1.` :
+                        `Next work session: ${sessionsIntoCurrentCycle + 1}`
+                      }
                     </div>
                   )}
                 </div>
@@ -346,7 +403,7 @@ function PomodoroTimer() {
                     : 'bg-green-500 hover:bg-green-600'
                 }`}
               >
-                {isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                {currentPhase === 'finished' ? 'Restart' : (isRunning ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />)}
               </Button>
 
               <Button
@@ -382,6 +439,16 @@ function PomodoroTimer() {
                     : 'Ready to start your Pomodoro session'
                 }
               </p>
+            </div>
+            {/* Descriptive Text for Pomodoro Timer */}
+            <div className="mt-8 text-center text-gray-700 max-w-prose mx-auto">
+                <h3 className="text-xl font-semibold mb-2">Boost Your Productivity with the Pomodoro Timer</h3>
+                <p className="mb-2">
+                    The Pomodoro Technique is a time management method that uses a timer to break down work into intervals, traditionally 25 minutes in length, separated by short breaks. Our Pomodoro Timer helps you implement this technique efficiently, improving focus and preventing burnout.
+                </p>
+                <p>
+                    Customize your work and break durations to suit your needs. After a set number of work sessions (pomodoros), you'll be prompted to take a longer break to refresh. This structured approach to work and rest can significantly enhance your productivity and help you maintain concentration over extended periods. Get started and conquer your tasks one pomodoro at a time!
+                </p>
             </div>
           </CardContent>
         </Card>

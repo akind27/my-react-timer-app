@@ -11,7 +11,7 @@ import { Switch } from '../ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Play, Pause, RotateCcw, Settings, Clock, User } from 'lucide-react';
 
-import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
+// No sound imports needed as all sound functionality is removed
 
 type Player = 'player1' | 'player2';
 
@@ -40,43 +40,18 @@ function ChessTimer() {
 
   const [player1Time, setPlayer1Time] = useState(minutes * 60);
   const [player2Time, setPlayer2Time] = useState(minutes * 60);
-  const [activePlayer, setActivePlayer] = useState<Player | null>(null);
+  const [activePlayer, setActivePlayer] = useState<Player | null>(null); // null means game not started, Player 1 to move
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [gameFinished, setGameFinished] = useState(false);
   const [winner, setWinner] = useState<Player | null>(null);
   const [moveCount, setMoveCount] = useState(0);
-  const [soundEnabled, setSoundEnabled] = useState(true); // Keep local sound toggle
+  // soundEnabled state removed as all sound functionality is removed
 
-  // Refs for intervals, one for the main game timer, one for the game-over alarm loop
+  // Ref for the main game timer interval
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
-  // Get playAlarm and stopAlarm from the global SoundContext
-  const { playAlarm, stopAlarm } = useSound();
-
-  // --- Alarm Looping Control Functions (Similar to other timers) ---
-  const startAlarmLoop = useCallback(() => {
-    // Stop any existing alarm loop first
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
-    }
-    playAlarm(); // Play the alarm immediately
-
-    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
-    alarmLoopIntervalRef.current = setInterval(() => {
-      playAlarm(); // Keep trying to play the alarm
-    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
-  }, [playAlarm]);
-
-  const stopAlarmLoop = useCallback(() => {
-    if (alarmLoopIntervalRef.current) {
-      clearInterval(alarmLoopIntervalRef.current);
-      alarmLoopIntervalRef.current = null;
-    }
-    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
-  }, [stopAlarm]);
-
+  // No alarm loop refs or sound functions needed as all sound functionality is removed
 
   // Effect to update initial player times when time control or minutes change
   useEffect(() => {
@@ -94,13 +69,8 @@ function ChessTimer() {
             if (newTime <= 0) {
               setGameFinished(true);
               setWinner('player2'); // Player 1 ran out of time, Player 2 wins
-              setIsRunning(false);
-              startAlarmLoop(); // Game finished, start looping alarm
+              setIsRunning(false); // Stop the timer
               return 0;
-            }
-            // Play low time warning if enabled and time is at 10 seconds or less
-            if (newTime === 10 && soundEnabled) {
-              playAlarm(); // Use global alarm for low time warning
             }
             return newTime;
           });
@@ -110,89 +80,81 @@ function ChessTimer() {
             if (newTime <= 0) {
               setGameFinished(true);
               setWinner('player1'); // Player 2 ran out of time, Player 1 wins
-              setIsRunning(false);
-              startAlarmLoop(); // Game finished, start looping alarm
+              setIsRunning(false); // Stop the timer
               return 0;
-            }
-            // Play low time warning if enabled and time is at 10 seconds or less
-            if (newTime === 10 && soundEnabled) {
-              playAlarm(); // Use global alarm for low time warning
             }
             return newTime;
           });
         }
       }, 1000);
     } else {
+      // Clear interval if timer is not running or game is finished
       if (gameIntervalRef.current) {
         clearInterval(gameIntervalRef.current);
-      }
-      // If game is paused and finished, stop alarm loop
-      if (!isRunning && gameFinished) {
-        stopAlarmLoop();
+        gameIntervalRef.current = null;
       }
     }
 
-    // Cleanup function: Clear game interval and stop alarm loop when component unmounts
+    // Cleanup function: Clear game interval when component unmounts
     return () => {
       if (gameIntervalRef.current) {
         clearInterval(gameIntervalRef.current);
+        gameIntervalRef.current = null;
       }
-      stopAlarmLoop();
     };
-  }, [isRunning, activePlayer, gameFinished, soundEnabled, playAlarm, startAlarmLoop, stopAlarmLoop]); // Add dependencies
+  }, [isRunning, activePlayer, gameFinished]); // Dependencies for useEffect
 
   // --- Handlers ---
   const handlePlayerMove = (player: Player) => {
-    if (gameFinished) return;
+    if (gameFinished) return; // Do nothing if game is finished
 
-    if (soundEnabled) {
-      playAlarm(); // Use global alarm for move sound
-    }
-    setMoveCount(prev => prev + 1);
-
-    // Add increment time to the player who just moved
-    if (increment > 0) {
-      if (player === 'player1') {
-        setPlayer1Time(prev => prev + increment);
-      } else {
-        setPlayer2Time(prev => prev + increment);
+    // If game is just starting (activePlayer is null), set Player 1 as active
+    if (activePlayer === null) {
+      setActivePlayer('player1'); // Player 1 starts
+    } else {
+      // It's the current player's turn to make a move and pass the turn
+      // Add increment time to the player who just moved
+      if (increment > 0) {
+        if (player === 'player1') {
+          setPlayer1Time(prev => prev + increment);
+        } else {
+          setPlayer2Time(prev => prev + increment);
+        }
       }
+      // Switch active player
+      const nextPlayer = player === 'player1' ? 'player2' : 'player1';
+      setActivePlayer(nextPlayer);
     }
 
-    // Switch active player
-    const nextPlayer = player === 'player1' ? 'player2' : 'player1';
-    setActivePlayer(nextPlayer);
-    setIsRunning(true);
+    setMoveCount(prev => prev + 1); // Increment move count after each player's press
+    setIsRunning(true); // Start/resume the timer
     setShowSettings(false); // Hide settings once game starts
   };
 
   const handlePause = () => {
-    setIsRunning(!isRunning);
-    // If pausing a finished game, stop the alarm
-    if (isRunning && gameFinished) {
-      stopAlarmLoop();
-    }
+    setIsRunning(prev => !prev); // Toggle isRunning state
   };
 
   const handleReset = () => {
+    // Clear the game interval if it's running
     if (gameIntervalRef.current) {
       clearInterval(gameIntervalRef.current);
+      gameIntervalRef.current = null;
     }
     setIsRunning(false);
-    setActivePlayer(null);
+    setActivePlayer(null); // Reset to null, allowing Player 1 to start
     setPlayer1Time(minutes * 60); // Reset to initial time based on settings
     setPlayer2Time(minutes * 60); // Reset to initial time based on settings
     setGameFinished(false);
     setWinner(null);
     setMoveCount(0);
     setShowSettings(true); // Show settings on reset
-    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const handleTimeControlChange = (controlName: string) => {
     const control = timeControls.find(tc => tc.name === controlName) || timeControls[0];
     setSelectedTimeControl(control);
-    // Reset timer when time control changes
+    // When time control changes, reset the timer to apply new times
     setIsRunning(false);
     setActivePlayer(null);
     setMinutes(control.minutes); // Update minutes and increment state from new control
@@ -203,7 +165,6 @@ function ChessTimer() {
     setWinner(null);
     setMoveCount(0);
     setShowSettings(true); // Show settings again
-    stopAlarmLoop(); // Stop any alarm if settings are changed
   };
 
   // Handler for custom minutes input
@@ -214,7 +175,11 @@ function ChessTimer() {
     if (selectedTimeControl.name !== 'Custom') {
       setSelectedTimeControl({ name: 'Custom', minutes: value, increment: increment, description: 'Set your own time' });
     }
-    handleReset(); // Reset timer when custom minutes change
+    // No need to call handleReset here, as changing time control or minutes
+    // while on 'Custom' should update the display immediately without full reset.
+    // However, if the game is in progress and minutes are changed, a reset might be desired.
+    // For now, mirroring previous behavior:
+    handleReset();
   };
 
   // Handler for custom increment input
@@ -225,7 +190,8 @@ function ChessTimer() {
     if (selectedTimeControl.name !== 'Custom') {
       setSelectedTimeControl({ name: 'Custom', minutes: minutes, increment: value, description: 'Set your own time' });
     }
-    handleReset(); // Reset timer when custom increment changes
+    // Mirroring previous behavior:
+    handleReset();
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -261,8 +227,6 @@ function ChessTimer() {
       return 'bg-white border-gray-200 border';
     }
   };
-
-  const isLowTime = (time: number) => time <= 30; // 30 seconds threshold for low time warning
 
   return (
     <> {/* Use a React Fragment to wrap Helmet and your main div */}
@@ -321,14 +285,7 @@ function ChessTimer() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <Label htmlFor="sound" className="text-sm">Sound Effects</Label>
-                <Switch
-                  id="sound"
-                  checked={soundEnabled}
-                  onCheckedChange={setSoundEnabled}
-                />
-              </div>
+              {/* Removed Sound Effects Switch */}
             </CardContent>
           </Card>
         ) : (
@@ -363,19 +320,20 @@ function ChessTimer() {
               <div className="text-center">
                 <Button
                   onClick={() => handlePlayerMove('player2')}
-                  disabled={gameFinished || activePlayer === 'player2'}
+                  // Player 2's button is enabled only if it's Player 2's turn and the game is running and not finished
+                  disabled={gameFinished || activePlayer !== 'player2' || !isRunning}
                   size="lg"
-                  className={`w-full h-12 mb-4 ${
-                    activePlayer === 'player2' && isRunning
+                  className={`w-full h-12 mb-4 text-white ${
+                    activePlayer === 'player2' && isRunning && !gameFinished
                       ? 'bg-blue-500 hover:bg-blue-600'
-                      : 'bg-gray-600 hover:bg-gray-700'
+                      : 'bg-gray-600 cursor-not-allowed opacity-50' // Disabled style
                   }`}
                 >
-                  {activePlayer === 'player2' && isRunning ? 'Your Turn' : 'Press After Move'}
+                  Press After Move
                 </Button>
 
                 <div className={`text-5xl font-mono font-bold mb-4 ${
-                  isLowTime(player2Time) && isRunning ? 'text-red-600 animate-pulse' : 'text-gray-900'
+                  player2Time <= 10 && isRunning && activePlayer === 'player2' ? 'text-red-600' : 'text-gray-900' // Highlight if time is low and it's their turn
                 }`}>
                   {formatTime(player2Time)}
                 </div>
@@ -385,7 +343,7 @@ function ChessTimer() {
 
           {/* Control Buttons */}
           <div className="flex justify-center gap-4">
-            {(isRunning || moveCount > 0) && !gameFinished && (
+            {(isRunning || activePlayer !== null) && !gameFinished && ( // Show pause/resume if game is running or has started
               <Button
                 onClick={handlePause}
                 size="lg"
@@ -407,7 +365,7 @@ function ChessTimer() {
               Reset
             </Button>
 
-            {!showSettings && moveCount === 0 && (
+            {!showSettings && moveCount === 0 && ( // Only show settings button if not running and settings are hidden
               <Button
                 onClick={() => setShowSettings(true)}
                 size="lg"
@@ -426,19 +384,20 @@ function ChessTimer() {
               <div className="text-center">
                 <Button
                   onClick={() => handlePlayerMove('player1')}
-                  disabled={gameFinished || activePlayer === 'player1'}
+                  // Player 1's button is enabled if it's their turn OR game hasn't started yet, and not finished
+                  disabled={gameFinished || (activePlayer !== 'player1' && activePlayer !== null) || (activePlayer === null && isRunning)}
                   size="lg"
-                  className={`w-full h-12 mb-4 ${
-                    activePlayer === 'player1' && isRunning
+                  className={`w-full h-12 mb-4 text-white ${
+                    ((activePlayer === 'player1' || activePlayer === null) && !gameFinished)
                       ? 'bg-blue-500 hover:bg-blue-600'
-                      : 'bg-gray-600 hover:bg-gray-700'
+                      : 'bg-gray-600 cursor-not-allowed opacity-50' // Disabled style
                   }`}
                 >
-                  {activePlayer === 'player1' && isRunning ? 'Your Turn' : 'Press After Move'}
+                  {activePlayer === null && !isRunning && !gameFinished ? 'Start Game (White)' : 'Press After Move'}
                 </Button>
 
                 <div className={`text-5xl font-mono font-bold mb-4 ${
-                  isLowTime(player1Time) && isRunning ? 'text-red-600 animate-pulse' : 'text-gray-900'
+                  player1Time <= 10 && isRunning && activePlayer === 'player1' ? 'text-red-600' : 'text-gray-900' // Highlight if time is low and it's their turn
                 }`}>
                   {formatTime(player1Time)}
                 </div>
@@ -471,9 +430,20 @@ function ChessTimer() {
 
         {moveCount === 0 && !showSettings && (
           <div className="mt-6 text-center text-sm text-gray-600">
-            <p>Click a player's button after they make their move to start their opponent's timer.</p>
+            <p>Click Player 1's button to start the game. After each player makes a move, they click their own button to stop their timer and start their opponent's.</p>
           </div>
         )}
+
+        {/* Added descriptive text about Blitz games */}
+        <div className="mt-8 text-center text-gray-700 max-w-prose mx-auto">
+            <h3 className="text-xl font-semibold mb-2">Dive into Blitz Chess!</h3>
+            <p className="mb-2">
+                Blitz chess is a fast-paced variant of chess where each player is given a limited amount of time to make all their moves. Typically, this ranges from 3 to 5 minutes per player, sometimes with a small increment added per move.
+            </p>
+            <p>
+                It's designed to test a player's quick thinking and intuition, making for exciting and dynamic games. Our Chess Timer is perfect for managing these thrilling time controls, ensuring fair play and intense competition.
+            </p>
+        </div>
       </div>
     </>
   );
