@@ -1,11 +1,15 @@
 // src/components/timers/BoxingTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths as previously discussed
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Settings, Bell } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Phase = 'prepare' | 'round' | 'rest' | 'finished';
 
@@ -18,83 +22,95 @@ function BoxingTimer() {
 
   const [currentRound, setCurrentRound] = useState(0);
   const [currentPhase, setCurrentPhase] = useState<Phase>('prepare');
-  const [timeLeft, setTimeLeft] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(0); // Time in seconds
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showWarning, setShowWarning] = useState(false);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const warningAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Refs for intervals, one for the countdown timer, one for the looping alarm
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for alarm loop
 
+  // Get playAlarm and stopAlarm from the SoundContext
+  const { playAlarm, stopAlarm } = useSound(); // Use the global sound context
+
+  // --- Alarm Looping Control Functions (Similar to CountdownTimer) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+    }
+    playAlarm(); // Play the alarm immediately
+
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    // Adjust this interval based on the typical length of your alarm sounds (e.g., 3-5 seconds)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+  // Main Effect for Boxing Timer Logic
   useEffect(() => {
-    // Create audio contexts
-    audioRef.current = new Audio();
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-
-    warningAudioRef.current = new Audio();
-    warningAudioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
+    // This useEffect will drive the timer countdown and phase transitions
     if (isRunning && timeLeft > 0) {
-      intervalRef.current = setInterval(() => {
+      countdownIntervalRef.current = setInterval(() => {
         setTimeLeft(prevTime => {
           const newTime = prevTime - 1;
 
-          // Check for warning signal
+          // Check for warning signal (if in round and time hits warning threshold)
           if (currentPhase === 'round' && newTime === warningTime && newTime > 0) {
             setShowWarning(true);
-            playWarningSound();
-            setTimeout(() => setShowWarning(false), 2000);
+            playAlarm(); // Use main alarm sound for warning
+            setTimeout(() => setShowWarning(false), 2000); // Hide warning after 2 seconds
           }
 
           if (newTime <= 0) {
+            // Time for current phase is up, handle transition
             handlePhaseTransition();
-            return 0;
+            return 0; // Set timeLeft to 0 for the completed phase
           }
           return newTime;
         });
       }, 1000);
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+      // If timer is paused and it's in a finished state, ensure alarm stops
+      if (!isRunning && currentPhase === 'finished') {
+        stopAlarmLoop();
       }
     }
 
+    // Cleanup function: Clear countdown interval when component unmounts or deps change
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
       }
+      // Ensure alarm loop is stopped if the timer component is unmounted
+      stopAlarmLoop();
     };
-  }, [isRunning, timeLeft, currentPhase, warningTime]);
+  }, [isRunning, timeLeft, currentPhase, warningTime, playAlarm, handlePhaseTransition, stopAlarmLoop]); // Add dependencies
 
-  const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        console.log('Phase transition');
-      });
+  // This useEffect will initiate the first phase's timeLeft when settings are applied or reset
+  useEffect(() => {
+    if (showSettings && currentPhase === 'prepare') {
+      setTimeLeft(prepareTime); // Set initial prepare time when settings are visible
+      setCurrentRound(0); // Reset round count when in settings
     }
-  };
+  }, [showSettings, currentPhase, prepareTime]);
 
-  const playWarningSound = () => {
-    if (warningAudioRef.current) {
-      warningAudioRef.current.currentTime = 0;
-      warningAudioRef.current.play().catch(() => {
-        console.log('Warning signal');
-      });
-    }
-  };
 
-  const handlePhaseTransition = () => {
-    playSound();
+  const handlePhaseTransition = useCallback(() => {
+    playAlarm(); // Use main alarm sound for phase transitions
 
     if (currentPhase === 'prepare') {
       setCurrentPhase('round');
@@ -105,6 +121,7 @@ function BoxingTimer() {
         setCurrentPhase('finished');
         setIsRunning(false);
         setTimeLeft(0);
+        startAlarmLoop(); // Start looping alarm when entire fight is finished
       } else {
         setCurrentPhase('rest');
         setTimeLeft(restTime);
@@ -114,25 +131,39 @@ function BoxingTimer() {
       setCurrentRound(prev => prev + 1);
       setTimeLeft(roundTime);
     }
-  };
+  }, [currentRound, currentPhase, playAlarm, restTime, roundTime, totalRounds, startAlarmLoop]); // Add dependencies
 
   const handleStart = () => {
-    if (currentPhase === 'prepare' && !isRunning && timeLeft === 0) {
-      setTimeLeft(prepareTime);
+    if (currentPhase === 'finished' && !isRunning) { // If finished, allow restart from prepare
+      handleReset(); // Reset before starting a new cycle
+      return;
+    }
+
+    if (currentPhase === 'prepare' && !isRunning) { // Initial start from prepare phase
       setIsRunning(true);
       setShowSettings(false);
-    } else if (currentPhase !== 'finished') {
+      // setTimeLeft will be set by the useEffect when currentPhase is prepare
+    } else if (currentPhase !== 'finished') { // Pause/Resume for other phases
       setIsRunning(!isRunning);
+      // If pausing a running timer that has finished, stop the alarm
+      if (isRunning && currentPhase === 'finished') {
+        stopAlarmLoop();
+      }
     }
   };
 
+
   const handleReset = () => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+    }
     setIsRunning(false);
     setCurrentPhase('prepare');
     setCurrentRound(0);
-    setTimeLeft(0);
+    setTimeLeft(prepareTime); // Reset to initial prepare time
     setShowWarning(false);
-    setShowSettings(true);
+    setShowSettings(true); // Show settings on reset
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -164,14 +195,13 @@ function BoxingTimer() {
   };
 
   return (
-    <> {/* Use a React Fragment to wrap Helmet and your main div */}
+    <>
       <Helmet>
         <title>Boxing Timer - Round-Based Training | Timer Central</title>
         <meta name="description" content="Use our online boxing timer for round-based training, martial arts, and HIIT workouts. Customizable rounds, rest periods, and prepare time."></meta>
-        {/* You can add more meta tags here if needed for Boxing Timer */}
       </Helmet>
 
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md mx-auto p-4 md:p-6 lg:p-8"> {/* Added padding for better mobile view */}
         <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
           <CardContent className="p-8 text-center">
             {showSettings && currentPhase === 'prepare' && !isRunning ? (

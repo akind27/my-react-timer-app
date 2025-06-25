@@ -1,11 +1,15 @@
 // src/components/timers/PomodoroTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths for consistency
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Settings, Coffee, Clock } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Phase = 'work' | 'shortBreak' | 'longBreak' | 'finished';
 
@@ -15,35 +19,52 @@ function PomodoroTimer() {
   const [longBreakTime, setLongBreakTime] = useState(15);
   const [sessionsUntilLongBreak, setSessionsUntilLongBreak] = useState(4);
 
-  const [currentSession, setCurrentSession] = useState(1);
+  const [currentSession, setCurrentSession] = useState(1); // Tracks session within current cycle (1 to sessionsUntilLongBreak)
   const [currentPhase, setCurrentPhase] = useState<Phase>('work');
-  const [timeLeft, setTimeLeft] = useState(25 * 60); // Initial time for work phase
+  const [timeLeft, setTimeLeft] = useState(25 * 60); // Initial time for work phase in seconds
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
-  const [completedSessions, setCompletedSessions] = useState(0);
+  const [completedSessions, setCompletedSessions] = useState(0); // Total completed work sessions across all cycles
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
-  // Initialize timeLeft when workTime changes (e.g., from settings)
+  // Get playAlarm and stopAlarm from the global SoundContext
+  const { playAlarm, stopAlarm } = useSound();
+
+
+  // --- Alarm Looping Control Functions (Similar to other timers) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+    }
+    playAlarm(); // Play the alarm immediately
+
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+  // Initialize timeLeft when workTime changes (e.g., from settings) AND when not running and settings are shown
+  // This ensures the displayed time updates correctly when settings are tweaked.
   useEffect(() => {
-    if (!isRunning && showSettings) { // Only update if not running and settings are shown
+    if (!isRunning && showSettings) {
       setTimeLeft(workTime * 60);
     }
-  }, [workTime, isRunning, showSettings]);
+  }, [workTime, isRunning, showSettings]); // Only depends on these states
 
-  useEffect(() => {
-    // Create audio context for phase transitions
-    audioRef.current = new Audio();
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
+  // Main timer logic effect
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -59,77 +80,88 @@ function PomodoroTimer() {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
-      // If timeLeft reaches 0 while running, ensure phase transition happens
+      // If timeLeft reaches 0 while running, ensure phase transition happens immediately (edge case)
       if (isRunning && timeLeft === 0) {
         handlePhaseTransition();
       }
+      // If timer is stopped and it's in the finished phase, start looping alarm
+      if (!isRunning && currentPhase === 'finished') {
+        startAlarmLoop();
+      } else {
+        stopAlarmLoop(); // Otherwise, stop any alarm loop
+      }
     }
 
+    // Cleanup function: Clear interval and stop alarm loop when component unmounts
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      stopAlarmLoop();
     };
-  }, [isRunning, timeLeft, currentPhase, currentSession, sessionsUntilLongBreak, workTime, shortBreakTime, longBreakTime]); // Added more dependencies for reliability
+  }, [isRunning, timeLeft, currentPhase, currentSession, sessionsUntilLongBreak, workTime, shortBreakTime, longBreakTime, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Added all necessary dependencies
 
-  const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(error => {
-        console.error('Error playing sound:', error);
-      });
-    }
-  };
 
-  const handlePhaseTransition = () => {
-    playSound();
+  const handlePhaseTransition = useCallback(() => {
+    playAlarm(); // Use global alarm for phase transitions
 
     if (currentPhase === 'work') {
       setCompletedSessions(prev => prev + 1);
-      // Check if it's time for a long break after completing this session
-      const nextSessionNumber = currentSession + 1; // Look ahead for the next session's status
-      const isLongBreakDue = nextSessionNumber % sessionsUntilLongBreak === 1; // Long break occurs AFTER the 'sessionsUntilLongBreak' work sessions are completed, and before the next 'work' session.
-
-      if (isLongBreakDue && currentSession === sessionsUntilLongBreak) { // This logic means long break after sessionsUntilLongBreak sessions
+      // Determine next phase after a work session
+      // A long break occurs after 'sessionsUntilLongBreak' completed work sessions.
+      // If completedSessions + 1 (the next one) is a multiple of sessionsUntilLongBreak, it's time for a long break.
+      if ((completedSessions + 1) % sessionsUntilLongBreak === 0) {
         setCurrentPhase('longBreak');
         setTimeLeft(longBreakTime * 60);
       } else {
         setCurrentPhase('shortBreak');
         setTimeLeft(shortBreakTime * 60);
       }
-      setCurrentSession(prev => prev + 1); // Increment session after a work phase
     } else if (currentPhase === 'shortBreak') {
       setCurrentPhase('work');
       setTimeLeft(workTime * 60);
+      // Increment session count only when transitioning from a break back to work
+      // This is for display purposes: "Session X of Y"
+      setCurrentSession(prev => prev % sessionsUntilLongBreak === 0 ? 1 : prev + 1);
     } else if (currentPhase === 'longBreak') {
-      // After a long break, reset session count and start a new cycle
+      // After a long break, reset session count for the new cycle and start a new work phase
       setCurrentPhase('work');
-      setCurrentSession(1); // Reset session count for the new cycle
+      setCurrentSession(1); // Reset to session 1 of the new cycle
       setTimeLeft(workTime * 60);
     }
-  };
+  }, [currentPhase, completedSessions, sessionsUntilLongBreak, longBreakTime, shortBreakTime, workTime, playAlarm]);
+
 
   const handleStart = () => {
-    setIsRunning(!isRunning);
-    if (showSettings) { // Hide settings only when starting from settings view
-      setShowSettings(false);
-    }
     // If starting from a finished state, reset the timer first
     if (currentPhase === 'finished') {
-      handleReset(); // Reset to initial state
-      setIsRunning(true); // Then start it
-      setShowSettings(false);
+      handleReset(); // This will set `isRunning` to false, so the next line will set it to true.
+      setShowSettings(false); // Hide settings after reset and before starting
     }
+    setIsRunning(prev => {
+      if (prev) { // If it was running and we're pausing
+        stopAlarmLoop();
+      } else { // If it was paused and we're starting
+        if (showSettings) { // If starting from settings, set initial time
+          setTimeLeft(workTime * 60);
+          setShowSettings(false);
+        }
+      }
+      return !prev;
+    });
   };
 
-
   const handleReset = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
     setIsRunning(false);
     setCurrentPhase('work');
     setCurrentSession(1);
     setCompletedSessions(0);
     setTimeLeft(workTime * 60); // Reset to the current workTime setting
-    setShowSettings(true); // Show settings on reset
+    setShowSettings(true); // Always show settings on reset
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -143,7 +175,7 @@ function PomodoroTimer() {
       case 'work': return 'text-red-600 bg-red-50 border-red-200';
       case 'shortBreak': return 'text-green-600 bg-green-50 border-green-200';
       case 'longBreak': return 'text-blue-600 bg-blue-50 border-blue-200';
-      case 'finished': return 'text-purple-600 bg-purple-50 border-purple-200'; // Added finished color
+      case 'finished': return 'text-purple-600 bg-purple-50 border-purple-200';
       default: return 'text-gray-600 bg-gray-50 border-gray-200';
     }
   };
@@ -153,7 +185,7 @@ function PomodoroTimer() {
       case 'work': return 'WORK TIME';
       case 'shortBreak': return 'SHORT BREAK';
       case 'longBreak': return 'LONG BREAK';
-      case 'finished': return 'POMODORO COMPLETE!'; // Added finished text
+      case 'finished': return 'POMODORO COMPLETE!';
       default: return '';
     }
   };
@@ -163,24 +195,24 @@ function PomodoroTimer() {
       case 'work': return <Clock className="w-6 h-6" />;
       case 'shortBreak':
       case 'longBreak': return <Coffee className="w-6 h-6" />;
-      case 'finished': return <span className="text-2xl">🎉</span>; // Changed to emoji for finished
+      case 'finished': return <span className="text-2xl">🎉</span>;
       default: return null;
     }
   };
 
   // Calculate remaining sessions until the *next* long break
-  const remainingSessions = sessionsUntilLongBreak - ((completedSessions) % sessionsUntilLongBreak);
-
+  // This needs to be based on `currentSession` within the cycle, not `completedSessions`
+  const currentSessionInCycle = (completedSessions % sessionsUntilLongBreak) + 1; // 1-indexed session in current cycle
+  const remainingSessionsForDisplay = sessionsUntilLongBreak - currentSessionInCycle + (currentPhase === 'work' ? 0 : 1); // If currently on break, count the current session as "done" for the next long break calc.
 
   return (
-    <> {/* Use a React Fragment to wrap Helmet and your main div */}
+    <>
       <Helmet>
         <title>Pomodoro Timer - Boost Productivity | Timer Central</title>
         <meta name="description" content="A customizable Pomodoro Timer to enhance your focus and productivity. Set work, short break, and long break durations, and track your sessions."></meta>
-        {/* You can add more meta tags here if needed for Pomodoro Timer */}
       </Helmet>
 
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md mx-auto p-4 md:p-6 lg:p-8"> {/* Added padding for better mobile view */}
         <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
           <CardContent className="p-8 text-center">
             {showSettings && !isRunning ? (
@@ -242,7 +274,7 @@ function PomodoroTimer() {
                   </div>
                   {currentPhase !== 'finished' && (
                     <div className="text-sm text-gray-600">
-                      Session {currentSession} • {completedSessions} completed
+                      Completed: {completedSessions} • Next Long Break in {remainingSessionsForDisplay}
                     </div>
                   )}
                 </div>
@@ -282,10 +314,10 @@ function PomodoroTimer() {
                       <div
                         key={i}
                         className={`w-3 h-3 rounded-full ${
-                          i < completedSessions % sessionsUntilLongBreak // Check completed sessions against the current cycle
+                          i < completedSessions % sessionsUntilLongBreak
                             ? 'bg-red-500' // Completed session in current cycle
-                            : i === (completedSessions % sessionsUntilLongBreak) && currentPhase === 'work' && isRunning // Current work session
-                              ? 'bg-red-300 animate-pulse'
+                            : i === (completedSessions % sessionsUntilLongBreak) && currentPhase === 'work' && isRunning
+                              ? 'bg-red-300 animate-pulse' // Current work session
                               : 'bg-gray-300' // Future session
                         }`}
                       />
@@ -294,8 +326,8 @@ function PomodoroTimer() {
                   {currentPhase !== 'finished' && (
                     <div className="text-xs text-gray-500 mt-1">
                       {currentPhase === 'work' ?
-                        `${remainingSessions} sessions until long break` :
-                        (currentSession -1) % sessionsUntilLongBreak === 0 && currentPhase === 'longBreak' ?
+                        `${sessionsUntilLongBreak - (completedSessions % sessionsUntilLongBreak)} sessions until long break` :
+                        (completedSessions % sessionsUntilLongBreak === 0 && currentPhase === 'longBreak') ?
                         `Long break completed. Next cycle starts with session 1.` :
                         `Next work session: ${currentSession}`}
                     </div>
@@ -308,7 +340,6 @@ function PomodoroTimer() {
               <Button
                 onClick={handleStart}
                 size="lg"
-                disabled={currentPhase === 'finished' && !showSettings} // Disable if finished and settings not shown
                 className={`w-16 h-16 rounded-full ${
                   isRunning
                     ? 'bg-red-500 hover:bg-red-600'

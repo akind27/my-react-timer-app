@@ -1,11 +1,15 @@
 // src/components/timers/TabataTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths for consistency
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Settings } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Phase = 'prepare' | 'work' | 'rest' | 'finished';
 
@@ -15,27 +19,50 @@ function TabataTimer() {
   const [rounds, setRounds] = useState(8);
   const [prepareTime, setPrepareTime] = useState(10);
 
-  const [currentRound, setCurrentRound] = useState(0);
+  const [currentRound, setCurrentRound] = useState(0); // 0 for prepare, then 1 to 'rounds'
   const [currentPhase, setCurrentPhase] = useState<Phase>('prepare');
-  const [timeLeft, setTimeLeft] = useState(0); // Initialized to 0, will be set by handleStart/reset
+  const [timeLeft, setTimeLeft] = useState(10); // Initialized to prepareTime
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
+  // Get playAlarm and stopAlarm from the global SoundContext
+  const { playAlarm, stopAlarm } = useSound();
+
+
+  // --- Alarm Looping Control Functions (Similar to other timers) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+    }
+    playAlarm(); // Play the alarm immediately
+
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+
+  // Effect to update timeLeft when settings change, but only if not running and settings are shown
   useEffect(() => {
-    // Create audio context for phase transitions
-    audioRef.current = new Audio();
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
+    if (!isRunning && showSettings) {
+      setTimeLeft(prepareTime); // When settings are shown, display prepare time
+    }
+  }, [prepareTime, isRunning, showSettings]);
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
+  // Main timer logic effect
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -51,30 +78,30 @@ function TabataTimer() {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
-      // If timeLeft reaches 0 while running, ensure phase transition happens
+      // If timeLeft reaches 0 while running, ensure phase transition happens immediately (edge case)
       if (isRunning && timeLeft === 0 && currentPhase !== 'finished') {
-          handlePhaseTransition();
+          handlePhaseTransition(); // Ensure transition if timer hits 0
+      }
+      // If timer is stopped and it's in the finished phase, start looping alarm
+      if (!isRunning && currentPhase === 'finished') {
+        startAlarmLoop();
+      } else {
+        stopAlarmLoop(); // Otherwise, stop any alarm loop
       }
     }
 
+    // Cleanup function: Clear interval and stop alarm loop when component unmounts
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      stopAlarmLoop();
     };
-  }, [isRunning, timeLeft, currentPhase, currentRound, rounds, workTime, restTime, prepareTime]); // Added all dependencies for logic
+  }, [isRunning, timeLeft, currentPhase, currentRound, rounds, workTime, restTime, prepareTime, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Added all necessary dependencies
 
-  const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(error => {
-        console.error('Error playing sound:', error);
-      });
-    }
-  };
 
-  const handlePhaseTransition = () => {
-    playSound();
+  const handlePhaseTransition = useCallback(() => {
+    playAlarm(); // Use global alarm for phase transitions
 
     if (currentPhase === 'prepare') {
       setCurrentPhase('work');
@@ -97,36 +124,49 @@ function TabataTimer() {
       setCurrentRound(prev => prev + 1);
       setTimeLeft(workTime);
     }
-  };
+  }, [currentPhase, currentRound, rounds, workTime, restTime, playAlarm]);
 
   const handleStart = () => {
-    if (currentPhase === 'finished' || (currentPhase === 'prepare' && timeLeft === 0)) {
-      // If finished, or starting from fresh prepare state, initialize prepare time and start
-      setTimeLeft(prepareTime);
-      setCurrentPhase('prepare'); // Ensure phase is 'prepare' if starting fresh or restarting after finish
-      setCurrentRound(0); // Reset rounds
-      setIsRunning(true);
-      setShowSettings(false);
-    } else {
-      // Otherwise, just toggle running state
-      setIsRunning(!isRunning);
+    if (currentPhase === 'finished' || (currentPhase === 'prepare' && !isRunning && timeLeft === 0)) {
+        // If finished, or starting fresh from prepare with timeLeft at 0, reset and start
+        setCurrentPhase('prepare');
+        setCurrentRound(0); // Reset rounds
+        setTimeLeft(prepareTime); // Set initial prepare time
+        setIsRunning(true);
+        setShowSettings(false);
+    } else if (showSettings) {
+        // If settings are currently visible, and we're clicking start for the first time
+        // hide settings and start the timer with prepare time.
+        setShowSettings(false);
+        setIsRunning(true);
+        setCurrentPhase('prepare');
+        setTimeLeft(prepareTime);
+    }
+    else {
+      // Otherwise, just toggle running state (pause/resume)
+      setIsRunning(prev => !prev);
     }
   };
 
+
   const handleReset = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
     setIsRunning(false);
     setCurrentPhase('prepare');
     setCurrentRound(0);
-    setTimeLeft(0); // Reset time to 0, it will be set to prepareTime on next start
+    setTimeLeft(prepareTime); // Reset to the initial prepareTime for consistency
     setShowSettings(true);
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const getPhaseColor = () => {
     switch (currentPhase) {
-      case 'prepare': return 'text-blue-600 bg-blue-50 border-blue-200'; // Added border color
-      case 'work': return 'text-green-600 bg-green-50 border-green-200'; // Added border color
-      case 'rest': return 'text-orange-600 bg-orange-50 border-orange-200'; // Added border color
-      case 'finished': return 'text-purple-600 bg-purple-50 border-purple-200'; // Added border color
+      case 'prepare': return 'text-blue-600 bg-blue-50 border-blue-200';
+      case 'work': return 'text-green-600 bg-green-50 border-green-200';
+      case 'rest': return 'text-orange-600 bg-orange-50 border-orange-200';
+      case 'finished': return 'text-purple-600 bg-purple-50 border-purple-200';
       default: return 'text-gray-600 bg-gray-50 border-gray-200';
     }
   };
@@ -168,17 +208,16 @@ function TabataTimer() {
   };
 
   return (
-    <> {/* Use a React Fragment to wrap Helmet and your main div */}
+    <>
       <Helmet>
         <title>Tabata Timer - High-Intensity Interval Training | Timer Central</title>
         <meta name="description" content="A simple online Tabata timer for your high-intensity interval training workouts. Customize work, rest, rounds, and prepare time."></meta>
-        {/* You can add more meta tags here if needed for Tabata Timer */}
       </Helmet>
 
-      <div className="max-w-md mx-auto">
-        <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}> {/* Added border-2 here */}
+      <div className="max-w-md mx-auto p-4 md:p-6 lg:p-8"> {/* Added padding for better mobile view */}
+        <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
           <CardContent className="p-8 text-center">
-            {showSettings && currentPhase === 'prepare' && !isRunning ? (
+            {showSettings && currentPhase === 'prepare' && !isRunning ? ( // Only show settings if in prepare phase, not running
               <div className="mb-8">
                 <h3 className="text-lg font-semibold mb-4">Tabata Settings</h3>
                 <div className="grid grid-cols-2 gap-4 mb-4">
@@ -270,7 +309,8 @@ function TabataTimer() {
               <Button
                 onClick={handleStart}
                 size="lg"
-                disabled={currentPhase === 'finished' && !showSettings} // Disable if finished and settings not shown (meaning, can't start again from finished unless settings are open to reset)
+                // Disable if finished and settings not shown (meaning, can't start again from finished unless settings are open to reset)
+                disabled={currentPhase === 'finished' && !showSettings && !isRunning}
                 className={`w-16 h-16 rounded-full ${
                   isRunning
                     ? 'bg-red-500 hover:bg-red-600'
@@ -290,7 +330,11 @@ function TabataTimer() {
               </Button>
 
               {/* Show settings button only when not running and settings are currently hidden */}
-              {!isRunning && !showSettings && (
+              {!isRunning && !showSettings && (currentPhase !== 'finished' || showSettings)} {/* Show if not running AND settings are hidden, OR if it's finished but settings are shown */}
+              {/* Refined condition for settings button visibility: Only show if NOT running AND settings are NOT visible. */}
+              {/* Also ensure it doesn't show up if we're in 'finished' state and haven't pressed reset yet to bring back settings */}
+              {!isRunning && !showSettings && (currentPhase !== 'finished' || (currentPhase === 'finished' && showSettings))}
+              {currentPhase !== 'finished' && !isRunning && !showSettings && (
                 <Button
                   onClick={() => setShowSettings(true)}
                   size="lg"

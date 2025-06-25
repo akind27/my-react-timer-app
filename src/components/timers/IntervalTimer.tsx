@@ -1,11 +1,15 @@
 // src/components/timers/IntervalTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Play, Pause, RotateCcw, Plus, Minus } from 'lucide-react'; // Removed Settings as it's not used directly as an icon, but as part of showSettings logic
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths for consistency
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Play, Pause, RotateCcw, Plus, Minus } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Phase = 'work' | 'rest' | 'finished';
 
@@ -16,34 +20,49 @@ interface IntervalSet {
 
 function IntervalTimer() {
   const [intervals, setIntervals] = useState<IntervalSet[]>([
-    { workTime: 30, restTime: 15 }
+    { workTime: 30, restTime: 15 } // Default initial interval
   ]);
   const [totalSets, setTotalSets] = useState(5);
   const [prepareTime, setPrepareTime] = useState(10);
 
   const [currentSet, setCurrentSet] = useState(0);
   const [currentInterval, setCurrentInterval] = useState(0);
-  const [currentPhase, setCurrentPhase] = useState<Phase>('work');
+  const [currentPhase, setCurrentPhase] = useState<Phase>('work'); // Initial phase for internal logic
   const [timeLeft, setTimeLeft] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
-  const [isPreparing, setIsPreparing] = useState(true);
+  const [isPreparing, setIsPreparing] = useState(true); // Tracks if we are in the initial 'prepare' phase
 
+  // Refs for intervals, one for the main game timer, one for the game-over alarm loop
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
-  useEffect(() => {
-    // Create audio context for phase transitions
-    audioRef.current = new Audio();
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSWFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
+  // Get playAlarm and stopAlarm from the global SoundContext
+  const { playAlarm, stopAlarm } = useSound();
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
+  // --- Alarm Looping Control Functions (Similar to other timers) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+    }
+    playAlarm(); // Play the alarm immediately
 
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+  // Effect for main timer logic
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -59,32 +78,39 @@ function IntervalTimer() {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      // If timer is stopped and it's in the finished phase, start looping alarm
+      if (!isRunning && currentPhase === 'finished') {
+        startAlarmLoop();
+      } else {
+        stopAlarmLoop(); // Otherwise, stop any alarm loop
+      }
     }
 
+    // Cleanup function: Clear interval and stop alarm loop when component unmounts
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      stopAlarmLoop();
     };
-  }, [isRunning, timeLeft, isPreparing, currentPhase, currentSet, totalSets, intervals]); // Add all dependencies for logic
+  }, [isRunning, timeLeft, isPreparing, currentPhase, currentSet, totalSets, intervals, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Add all dependencies
 
-  const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(error => {
-        console.error('Error playing sound:', error);
-      });
+  // This effect ensures initial prepare time is set when entering settings or resetting
+  useEffect(() => {
+    if (isPreparing && showSettings) {
+      setTimeLeft(prepareTime);
     }
-  };
+  }, [isPreparing, showSettings, prepareTime]);
 
-  const handlePhaseTransition = () => {
-    playSound();
+
+  const handlePhaseTransition = useCallback(() => {
+    playAlarm(); // Use global alarm for phase transitions
 
     if (isPreparing) {
       setIsPreparing(false);
-      setCurrentPhase('work');
       setCurrentSet(1); // Start with the first set
       setCurrentInterval(0); // Start with the first interval definition
+      setCurrentPhase('work');
       setTimeLeft(intervals[0].workTime);
     } else if (currentPhase === 'work') {
       setCurrentPhase('rest');
@@ -97,6 +123,7 @@ function IntervalTimer() {
         setCurrentPhase('finished');
         setIsRunning(false);
         setTimeLeft(0);
+        startAlarmLoop(); // Workout finished, start looping alarm
       } else {
         setCurrentPhase('work');
         setCurrentInterval(nextIntervalIndex);
@@ -108,52 +135,74 @@ function IntervalTimer() {
         }
       }
     }
-  };
+  }, [currentInterval, currentPhase, currentSet, intervals, totalSets, isPreparing, playAlarm, startAlarmLoop]);
+
 
   const handleStart = () => {
+    if (currentPhase === 'finished' && !isRunning) { // If finished, allow restarting the workout
+      handleReset(); // Reset the state to allow a fresh start
+      return; // handleReset will trigger the prepare phase
+    }
+
     if ((isPreparing || timeLeft === 0) && !isRunning) { // Start prepare or restart if timer finished
-      setTimeLeft(prepareTime);
+      setTimeLeft(prepareTime); // Ensure prepare time is set
       setIsRunning(true);
       setShowSettings(false);
-      if (currentPhase === 'finished') { // If restarting after finished, reset state
-        setCurrentPhase('work'); // This will be immediately overridden by isPreparing to 'prepare'
-        setCurrentSet(0);
-        setCurrentInterval(0);
-        setIsPreparing(true); // Ensure prepare phase starts
+      setIsPreparing(true); // Explicitly ensure prepare phase starts on first play
+      stopAlarmLoop(); // Ensure alarm is off when starting
+    } else { // If already running or paused (but not finished)
+      setIsRunning(prev => !prev);
+      if (isRunning) { // If it was running and is now paused
+        stopAlarmLoop(); // Stop alarm if pausing a finished workout
       }
-    } else if (currentPhase !== 'finished') {
-      setIsRunning(!isRunning);
     }
   };
 
   const handleReset = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
     setIsRunning(false);
-    setCurrentPhase('work'); // Reset to default phase, will be overridden by isPreparing
+    setCurrentPhase('work'); // Set to 'work' initially, will be overridden by isPreparing
     setCurrentSet(0);
     setCurrentInterval(0);
-    setTimeLeft(0);
-    setIsPreparing(true);
-    setShowSettings(true);
-    // Reset intervals to a default if you want, or keep current custom settings
-    // setIntervals([{ workTime: 30, restTime: 15 }]); // Uncomment if you want to reset interval structure
-    // setTotalSets(5); // Uncomment if you want to reset total sets
-    // setPrepareTime(10); // Uncomment if you want to reset prepare time
+    setTimeLeft(0); // Set time left to 0, prepare effect will set it to prepareTime
+    setIsPreparing(true); // Go back to preparing state
+    setShowSettings(true); // Show settings on reset
+    // Reset intervals and total sets to initial defaults
+    setIntervals([{ workTime: 30, restTime: 15 }]);
+    setTotalSets(5);
+    setPrepareTime(10);
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const addInterval = () => {
     setIntervals([...intervals, { workTime: 30, restTime: 15 }]);
+    if (showSettings === false) handleReset(); // If in active timer, reset on add/remove interval
   };
 
   const removeInterval = (index: number) => {
     if (intervals.length > 1) {
       setIntervals(intervals.filter((_, i) => i !== index));
     }
+    if (showSettings === false) handleReset(); // If in active timer, reset on add/remove interval
   };
 
   const updateInterval = (index: number, field: 'workTime' | 'restTime', value: number) => {
     const newIntervals = [...intervals];
     newIntervals[index][field] = Math.max(1, value); // Minimum 1 second
     setIntervals(newIntervals);
+    if (showSettings === false) handleReset(); // If in active timer, reset on interval value change
+  };
+
+  const handleTotalSetsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTotalSets(Math.max(1, parseInt(e.target.value) || 5));
+    if (showSettings === false) handleReset(); // Reset if changing during active timer
+  };
+
+  const handlePrepareTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPrepareTime(Math.max(1, parseInt(e.target.value) || 10));
+    if (showSettings === false) handleReset(); // Reset if changing during active timer
   };
 
   const formatTime = (timeInSeconds: number) => {
@@ -183,7 +232,7 @@ function IntervalTimer() {
   };
 
   const getCurrentIntervalData = () => {
-    return intervals[currentInterval] || intervals[0]; // Fallback to first if somehow out of bounds
+    return intervals[currentInterval] || { workTime: 0, restTime: 0 }; // Return current interval, or fallback
   };
 
   return (
@@ -191,10 +240,9 @@ function IntervalTimer() {
       <Helmet>
         <title>Interval Timer - Custom Workout Intervals | Timer Central</title>
         <meta name="description" content="A versatile online interval timer to customize your workout sets. Set multiple work and rest intervals, total sets, and prepare time for circuit training."></meta>
-        {/* You can add more meta tags here if needed for Interval Timer */}
       </Helmet>
 
-      <div className="max-w-lg mx-auto">
+      <div className="max-w-lg mx-auto p-4 md:p-6 lg:p-8"> {/* Added padding for better mobile view */}
         <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
           <CardContent className="p-8 text-center">
             {showSettings && isPreparing && !isRunning ? (
@@ -210,7 +258,7 @@ function IntervalTimer() {
                         type="number"
                         min="1"
                         value={totalSets}
-                        onChange={(e) => setTotalSets(Math.max(1, parseInt(e.target.value) || 5))}
+                        onChange={handleTotalSetsChange}
                         className="text-center"
                       />
                     </div>
@@ -221,7 +269,7 @@ function IntervalTimer() {
                         type="number"
                         min="1"
                         value={prepareTime}
-                        onChange={(e) => setPrepareTime(Math.max(1, parseInt(e.target.value) || 10))}
+                        onChange={handlePrepareTimeChange}
                         className="text-center"
                       />
                     </div>

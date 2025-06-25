@@ -1,13 +1,17 @@
 // src/components/timers/ChessTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths for consistency
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Switch } from '../ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Play, Pause, RotateCcw, Settings, Clock, User } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Player = 'player1' | 'player2';
 
@@ -42,112 +46,111 @@ function ChessTimer() {
   const [gameFinished, setGameFinished] = useState(false);
   const [winner, setWinner] = useState<Player | null>(null);
   const [moveCount, setMoveCount] = useState(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true); // Keep local sound toggle
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lowTimeAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Refs for intervals, one for the main game timer, one for the game-over alarm loop
+  const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
-  useEffect(() => {
-    if (selectedTimeControl.name !== 'Custom') {
-      setMinutes(selectedTimeControl.minutes);
-      setIncrement(selectedTimeControl.increment);
-      setPlayer1Time(selectedTimeControl.minutes * 60);
-      setPlayer2Time(selectedTimeControl.minutes * 60);
+  // Get playAlarm and stopAlarm from the global SoundContext
+  const { playAlarm, stopAlarm } = useSound();
+
+  // --- Alarm Looping Control Functions (Similar to other timers) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
     }
-  }, [selectedTimeControl]);
+    playAlarm(); // Play the alarm immediately
 
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+
+  // Effect to update initial player times when time control or minutes change
   useEffect(() => {
     setPlayer1Time(minutes * 60);
     setPlayer2Time(minutes * 60);
   }, [minutes]);
 
-  useEffect(() => {
-    // Create audio contexts
-    audioRef.current = new Audio();
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-
-    lowTimeAudioRef.current = new Audio();
-    lowTimeAudioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
+  // Main game logic effect
   useEffect(() => {
     if (isRunning && activePlayer && !gameFinished) {
-      intervalRef.current = setInterval(() => {
+      gameIntervalRef.current = setInterval(() => {
         if (activePlayer === 'player1') {
           setPlayer1Time(prevTime => {
             const newTime = prevTime - 1;
             if (newTime <= 0) {
               setGameFinished(true);
-              setWinner('player2');
+              setWinner('player2'); // Player 1 ran out of time, Player 2 wins
               setIsRunning(false);
+              startAlarmLoop(); // Game finished, start looping alarm
               return 0;
             }
+            // Play low time warning if enabled and time is at 10 seconds or less
             if (newTime === 10 && soundEnabled) {
-              playLowTimeSound();
+              playAlarm(); // Use global alarm for low time warning
             }
             return newTime;
           });
-        } else {
+        } else { // activePlayer === 'player2'
           setPlayer2Time(prevTime => {
             const newTime = prevTime - 1;
             if (newTime <= 0) {
               setGameFinished(true);
-              setWinner('player1');
+              setWinner('player1'); // Player 2 ran out of time, Player 1 wins
               setIsRunning(false);
+              startAlarmLoop(); // Game finished, start looping alarm
               return 0;
             }
+            // Play low time warning if enabled and time is at 10 seconds or less
             if (newTime === 10 && soundEnabled) {
-              playLowTimeSound();
+              playAlarm(); // Use global alarm for low time warning
             }
             return newTime;
           });
         }
       }, 1000);
     } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (gameIntervalRef.current) {
+        clearInterval(gameIntervalRef.current);
+      }
+      // If game is paused and finished, stop alarm loop
+      if (!isRunning && gameFinished) {
+        stopAlarmLoop();
       }
     }
 
+    // Cleanup function: Clear game interval and stop alarm loop when component unmounts
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (gameIntervalRef.current) {
+        clearInterval(gameIntervalRef.current);
       }
+      stopAlarmLoop();
     };
-  }, [isRunning, activePlayer, gameFinished, soundEnabled]);
+  }, [isRunning, activePlayer, gameFinished, soundEnabled, playAlarm, startAlarmLoop, stopAlarmLoop]); // Add dependencies
 
-  const playSound = () => {
-    if (audioRef.current && soundEnabled) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {
-        console.log('Move sound');
-      });
-    }
-  };
-
-  const playLowTimeSound = () => {
-    if (lowTimeAudioRef.current && soundEnabled) {
-      lowTimeAudioRef.current.currentTime = 0;
-      lowTimeAudioRef.current.play().catch(() => {
-        console.log('Low time warning');
-      });
-    }
-  };
-
+  // --- Handlers ---
   const handlePlayerMove = (player: Player) => {
     if (gameFinished) return;
 
-    playSound();
+    if (soundEnabled) {
+      playAlarm(); // Use global alarm for move sound
+    }
     setMoveCount(prev => prev + 1);
 
-    // Add increment time
+    // Add increment time to the player who just moved
     if (increment > 0) {
       if (player === 'player1') {
         setPlayer1Time(prev => prev + increment);
@@ -160,43 +163,90 @@ function ChessTimer() {
     const nextPlayer = player === 'player1' ? 'player2' : 'player1';
     setActivePlayer(nextPlayer);
     setIsRunning(true);
-    setShowSettings(false);
+    setShowSettings(false); // Hide settings once game starts
   };
 
   const handlePause = () => {
     setIsRunning(!isRunning);
+    // If pausing a finished game, stop the alarm
+    if (isRunning && gameFinished) {
+      stopAlarmLoop();
+    }
   };
 
   const handleReset = () => {
+    if (gameIntervalRef.current) {
+      clearInterval(gameIntervalRef.current);
+    }
     setIsRunning(false);
     setActivePlayer(null);
-    setPlayer1Time(minutes * 60);
-    setPlayer2Time(minutes * 60);
+    setPlayer1Time(minutes * 60); // Reset to initial time based on settings
+    setPlayer2Time(minutes * 60); // Reset to initial time based on settings
     setGameFinished(false);
     setWinner(null);
     setMoveCount(0);
-    setShowSettings(true);
+    setShowSettings(true); // Show settings on reset
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const handleTimeControlChange = (controlName: string) => {
     const control = timeControls.find(tc => tc.name === controlName) || timeControls[0];
     setSelectedTimeControl(control);
+    // Reset timer when time control changes
+    setIsRunning(false);
+    setActivePlayer(null);
+    setMinutes(control.minutes); // Update minutes and increment state from new control
+    setIncrement(control.increment);
+    setPlayer1Time(control.minutes * 60);
+    setPlayer2Time(control.minutes * 60);
+    setGameFinished(false);
+    setWinner(null);
+    setMoveCount(0);
+    setShowSettings(true); // Show settings again
+    stopAlarmLoop(); // Stop any alarm if settings are changed
+  };
+
+  // Handler for custom minutes input
+  const handleMinutesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(0.5, parseFloat(e.target.value) || 1);
+    setMinutes(value);
+    // Also update selectedTimeControl to Custom if user manually changes time
+    if (selectedTimeControl.name !== 'Custom') {
+      setSelectedTimeControl({ name: 'Custom', minutes: value, increment: increment, description: 'Set your own time' });
+    }
+    handleReset(); // Reset timer when custom minutes change
+  };
+
+  // Handler for custom increment input
+  const handleIncrementChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(0, parseInt(e.target.value) || 0);
+    setIncrement(value);
+    // Also update selectedTimeControl to Custom if user manually changes increment
+    if (selectedTimeControl.name !== 'Custom') {
+      setSelectedTimeControl({ name: 'Custom', minutes: minutes, increment: value, description: 'Set your own time' });
+    }
+    handleReset(); // Reset timer when custom increment changes
   };
 
   const formatTime = (timeInSeconds: number) => {
-    const minutes = Math.floor(timeInSeconds / 60);
-    const seconds = timeInSeconds % 60;
+    const absTime = Math.abs(timeInSeconds); // Use absolute time for formatting
+    const hours = Math.floor(absTime / 3600);
+    const minutes = Math.floor((absTime % 3600) / 60);
+    const seconds = absTime % 60;
 
-    if (timeInSeconds < 60) {
-      return `${seconds.toString().padStart(2, '0')}`;
-    } else if (timeInSeconds < 3600) {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    const formattedMinutes = minutes.toString().padStart(2, '0');
+    const formattedSeconds = seconds.toString().padStart(2, '0');
+
+    let timeString = '';
+    if (hours > 0) {
+      timeString = `${hours}:${formattedMinutes}:${formattedSeconds}`;
     } else {
-      const hours = Math.floor(minutes / 60);
-      const remainingMinutes = minutes % 60;
-      return `${hours}:${remainingMinutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      timeString = `${formattedMinutes}:${formattedSeconds}`;
     }
+
+    return timeInSeconds < 0 ? `-${timeString}` : timeString; // Add negative sign if time is negative
   };
+
 
   const getPlayerCardStyle = (player: Player) => {
     if (gameFinished) {
@@ -212,17 +262,16 @@ function ChessTimer() {
     }
   };
 
-  const isLowTime = (time: number) => time <= 30;
+  const isLowTime = (time: number) => time <= 30; // 30 seconds threshold for low time warning
 
   return (
     <> {/* Use a React Fragment to wrap Helmet and your main div */}
       <Helmet>
         <title>Online Chess Clock & Timer - Blitz, Rapid, Classical | Timer Central</title>
         <meta name="description" content="Play chess with our online chess clock. Features customizable time controls (Blitz, Rapid, Classical), move increments, and sound effects."></meta>
-        {/* You can add more meta tags here if needed for Chess Timer */}
       </Helmet>
 
-      <div className="max-w-lg mx-auto">
+      <div className="max-w-lg mx-auto p-4 md:p-6 lg:p-8"> {/* Added padding for better mobile view */}
         {showSettings && !isRunning && moveCount === 0 ? (
           <Card className="shadow-xl mb-6">
             <CardContent className="p-6">
@@ -253,7 +302,7 @@ function ChessTimer() {
                     min="0.5"
                     step="0.5"
                     value={minutes}
-                    onChange={(e) => setMinutes(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                    onChange={handleMinutesChange}
                     className="text-center"
                     disabled={selectedTimeControl.name !== 'Custom'}
                   />
@@ -265,7 +314,7 @@ function ChessTimer() {
                     type="number"
                     min="0"
                     value={increment}
-                    onChange={(e) => setIncrement(Math.max(0, parseInt(e.target.value) || 0))}
+                    onChange={handleIncrementChange}
                     className="text-center"
                     disabled={selectedTimeControl.name !== 'Custom'}
                   />
@@ -312,17 +361,11 @@ function ChessTimer() {
               </div>
 
               <div className="text-center">
-                <div className={`text-5xl font-mono font-bold mb-4 ${
-                  isLowTime(player2Time) ? 'text-red-600 animate-pulse' : 'text-gray-900'
-                }`}>
-                  {formatTime(player2Time)}
-                </div>
-
                 <Button
                   onClick={() => handlePlayerMove('player2')}
                   disabled={gameFinished || activePlayer === 'player2'}
                   size="lg"
-                  className={`w-full h-12 ${
+                  className={`w-full h-12 mb-4 ${
                     activePlayer === 'player2' && isRunning
                       ? 'bg-blue-500 hover:bg-blue-600'
                       : 'bg-gray-600 hover:bg-gray-700'
@@ -330,6 +373,12 @@ function ChessTimer() {
                 >
                   {activePlayer === 'player2' && isRunning ? 'Your Turn' : 'Press After Move'}
                 </Button>
+
+                <div className={`text-5xl font-mono font-bold mb-4 ${
+                  isLowTime(player2Time) && isRunning ? 'text-red-600 animate-pulse' : 'text-gray-900'
+                }`}>
+                  {formatTime(player2Time)}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -389,7 +438,7 @@ function ChessTimer() {
                 </Button>
 
                 <div className={`text-5xl font-mono font-bold mb-4 ${
-                  isLowTime(player1Time) ? 'text-red-600 animate-pulse' : 'text-gray-900'
+                  isLowTime(player1Time) && isRunning ? 'text-red-600 animate-pulse' : 'text-gray-900'
                 }`}>
                   {formatTime(player1Time)}
                 </div>

@@ -1,5 +1,5 @@
 // src/components/timers/Stopwatch.tsx
-import React, { useState, useEffect, useRef } from 'react'; // Import useRef
+import React, { useState, useEffect, useRef } from 'react';
 import { Helmet } from 'react-helmet-async';
 
 const Stopwatch = () => {
@@ -14,7 +14,7 @@ const Stopwatch = () => {
         setTime((prevTime) => prevTime + 10); // Update every 10ms for centiseconds
       }, 10);
     } else if (timerRef.current) {
-      // Clear the interval if not running or when component unmounts
+      // Clear the interval if not running
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
@@ -23,6 +23,7 @@ const Stopwatch = () => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+        timerRef.current = null;
       }
     };
   }, [isRunning]); // Dependency array: re-run effect when isRunning changes
@@ -38,7 +39,7 @@ const Stopwatch = () => {
     }
   };
 
-  // Helper function to format time for display (optional, but makes it look better)
+  // Helper function to format time for display
   const formatTime = (ms: number) => {
     const minutes = Math.floor(ms / 60000);
     const seconds = Math.floor((ms % 60000) / 1000);
@@ -53,21 +54,22 @@ const Stopwatch = () => {
         <meta name="description" content="Use our free online stopwatch for accurate time measurement. Track laps, splits, and total time for sports, studies, or daily tasks."></meta>
       </Helmet>
 
-      <div className="flex flex-col items-center justify-center p-8 bg-gray-100 rounded-lg shadow-md">
+      {/* Added some responsive padding for better mobile view */}
+      <div className="flex flex-col items-center justify-center p-4 md:p-8 bg-gray-100 rounded-lg shadow-md max-w-lg mx-auto">
         <h2 className="text-3xl font-bold mb-4 text-gray-800">Stopwatch</h2>
-        <p className="text-6xl font-mono mb-8 text-blue-600">{formatTime(time)}</p> {/* Use formatTime here */}
+        <p className="text-6xl font-mono mb-8 text-blue-600">{formatTime(time)}</p>
         <div className="flex space-x-4">
           <button
             onClick={startStopwatch}
             disabled={isRunning}
-            className="px-6 py-3 rounded-lg text-white font-semibold transition-colors duration-200 bg-green-500 hover:bg-green-600"
+            className="px-6 py-3 rounded-lg text-white font-semibold transition-colors duration-200 bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Start
           </button>
           <button
             onClick={stopStopwatch}
             disabled={!isRunning}
-            className="px-6 py-3 rounded-lg text-white font-semibold transition-colors duration-200 bg-red-500 hover:bg-red-600"
+            className="px-6 py-3 rounded-lg text-white font-semibold transition-colors duration-200 bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Stop
           </button>

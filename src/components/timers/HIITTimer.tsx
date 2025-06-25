@@ -1,12 +1,16 @@
 // src/components/timers/HIITTimer.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Helmet } from 'react-helmet-async'; // <--- NEW IMPORT for Helmet
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
+// Corrected Shadcn UI component paths to relative paths for consistency
+import { Card, CardContent } from '../ui/card';
+import { Button } from '../ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
 import { Play, Pause, RotateCcw, Settings, Zap, Activity } from 'lucide-react';
+
+import { useSound } from '../Router'; // CORRECT IMPORT: Use the global sound context
 
 type Phase = 'prepare' | 'work' | 'rest' | 'finished';
 
@@ -40,30 +44,48 @@ function HIITTimer() {
   const [isRunning, setIsRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
 
+  // Refs for intervals, one for the main game timer, one for the game-over alarm loop
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmLoopIntervalRef = useRef<NodeJS.Timeout | null>(null); // New ref for game-over alarm loop
 
+  // Get playAlarm and stopAlarm from the global SoundContext
+  const { playAlarm, stopAlarm } = useSound();
+
+  // --- Alarm Looping Control Functions (Similar to other timers) ---
+  const startAlarmLoop = useCallback(() => {
+    // Stop any existing alarm loop first
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+    }
+    playAlarm(); // Play the alarm immediately
+
+    // Set an interval to re-trigger playAlarm if it stops (browser autoplay policy)
+    alarmLoopIntervalRef.current = setInterval(() => {
+      playAlarm(); // Keep trying to play the alarm
+    }, 4000); // Re-trigger every 4 seconds (adjust as needed for your selected sound)
+  }, [playAlarm]);
+
+  const stopAlarmLoop = useCallback(() => {
+    if (alarmLoopIntervalRef.current) {
+      clearInterval(alarmLoopIntervalRef.current);
+      alarmLoopIntervalRef.current = null;
+    }
+    stopAlarm(); // Call the SoundProvider's stopAlarm to pause/reset audio
+  }, [stopAlarm]);
+
+
+  // Effect to update initial settings when time control changes
   useEffect(() => {
     if (selectedProtocol.name !== 'Custom') {
       setWorkTime(selectedProtocol.workTime);
       setRestTime(selectedProtocol.restTime);
       setRounds(selectedProtocol.rounds);
     }
-  }, [selectedProtocol]);
+    // Also reset the timer when protocol changes
+    handleReset();
+  }, [selectedProtocol]); // Added handleReset to dependency array
 
-  useEffect(() => {
-    // Create audio context for phase transitions
-    audioRef.current = new Audio();
-    // Base64 encoded audio for a simple beep/alert sound
-    audioRef.current.src = 'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmEAAAD//2xdX3SYr6yQYTY1YKHQ26thHAY/mtvyw3IlBSyBzvLYiTcIGWi77eefTQwMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606eulVRQKRp/g8r5h';
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-
+  // Main game logic effect
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
       intervalRef.current = setInterval(() => {
@@ -79,26 +101,26 @@ function HIITTimer() {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      // If timer is stopped and it's in the finished phase, start looping alarm
+      if (!isRunning && currentPhase === 'finished') {
+        startAlarmLoop();
+      } else {
+        stopAlarmLoop(); // Otherwise, stop any alarm loop
+      }
     }
 
+    // Cleanup function: Clear interval and stop alarm loop when component unmounts
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
+      stopAlarmLoop();
     };
-  }, [isRunning, timeLeft, currentPhase, workTime, restTime, rounds]); // Add all dependencies for logic
+  }, [isRunning, timeLeft, currentPhase, workTime, restTime, rounds, handlePhaseTransition, startAlarmLoop, stopAlarmLoop]); // Add all dependencies for logic
 
-  const playSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(error => {
-        console.error('Error playing sound:', error);
-      });
-    }
-  };
 
-  const handlePhaseTransition = () => {
-    playSound();
+  const handlePhaseTransition = useCallback(() => {
+    playAlarm(); // Use global alarm for phase transitions
 
     if (currentPhase === 'prepare') {
       setCurrentPhase('work');
@@ -109,6 +131,7 @@ function HIITTimer() {
         setCurrentPhase('finished');
         setIsRunning(false);
         setTimeLeft(0);
+        startAlarmLoop(); // Game finished, start looping alarm
       } else {
         setCurrentPhase('rest');
         setTimeLeft(restTime);
@@ -118,19 +141,29 @@ function HIITTimer() {
       setCurrentRound(prev => prev + 1);
       setTimeLeft(workTime);
     }
-  };
+  }, [currentPhase, currentRound, rounds, workTime, restTime, playAlarm, startAlarmLoop]); // Add useCallback dependencies
+
 
   const handleStart = () => {
     if (currentPhase === 'prepare' && !isRunning && timeLeft === 0) {
       setTimeLeft(prepareTime);
       setIsRunning(true);
       setShowSettings(false);
+      stopAlarmLoop(); // Ensure alarm is off when starting
     } else if (currentPhase !== 'finished') {
-      setIsRunning(!isRunning);
+      setIsRunning(prev => !prev);
+      if (isRunning) { // If it was running and is now paused
+        stopAlarmLoop();
+      } else { // If it was paused and is now starting/resuming
+        // No sound here, sound is handled by phase transitions
+      }
     }
   };
 
   const handleReset = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
     setIsRunning(false);
     setCurrentPhase('prepare');
     setCurrentRound(0);
@@ -141,25 +174,56 @@ function HIITTimer() {
     setRestTime(selectedProtocol.restTime);
     setRounds(selectedProtocol.rounds);
     setPrepareTime(10); // Reset prepare time to default
+    stopAlarmLoop(); // Crucial: Stop the alarm loop on reset
   };
 
   const handleProtocolChange = (protocolName: string) => {
     const protocol = hiitProtocols.find(p => p.name === protocolName) || hiitProtocols[0];
     setSelectedProtocol(protocol);
-    // When protocol changes, reset the timer state as well
-    setIsRunning(false);
-    setCurrentPhase('prepare');
-    setCurrentRound(0);
-    setTimeLeft(0);
-    setShowSettings(true);
+    // State will be reset by the useEffect that watches selectedProtocol
   };
 
+  // Handlers for custom time inputs to update protocol to 'Custom'
+  const handleWorkTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(5, Math.min(300, parseInt(e.target.value) || 20));
+    setWorkTime(value);
+    if (selectedProtocol.name !== 'Custom') {
+      setSelectedProtocol({ ...selectedProtocol, name: 'Custom', workTime: value });
+    }
+  };
+
+  const handleRestTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(5, Math.min(180, parseInt(e.target.value) || 10));
+    setRestTime(value);
+    if (selectedProtocol.name !== 'Custom') {
+      setSelectedProtocol({ ...selectedProtocol, name: 'Custom', restTime: value });
+    }
+  };
+
+  const handleRoundsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(1, Math.min(30, parseInt(e.target.value) || 8));
+    setRounds(value);
+    if (selectedProtocol.name !== 'Custom') {
+      setSelectedProtocol({ ...selectedProtocol, name: 'Custom', rounds: value });
+    }
+  };
+
+  const handlePrepareTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = Math.max(5, Math.min(60, parseInt(e.target.value) || 10));
+    setPrepareTime(value);
+    if (selectedProtocol.name !== 'Custom') {
+      // If user changes prepare time, it's also a custom setup (though not strictly part of protocol obj)
+      setSelectedProtocol({ ...selectedProtocol, name: 'Custom' });
+    }
+  };
+
+
   const getTotalWorkoutTime = () => {
-    // Total time = prepare + (work + rest) * (rounds - 1) + final work round
-    // Or simpler: prepare + work*rounds + rest*(rounds-1)
-    const totalTime = prepareTime + (workTime * rounds) + (restTime * (rounds - 1));
-    const minutes = Math.floor(totalTime / 60);
-    const seconds = totalTime % 60;
+    // Total time = prepare + (work * rounds) + (rest * (rounds - 1))
+    // If only 1 round, restTime is not added
+    const totalTimeInSeconds = prepareTime + (workTime * rounds) + (rounds > 1 ? restTime * (rounds - 1) : 0);
+    const minutes = Math.floor(totalTimeInSeconds / 60);
+    const seconds = totalTimeInSeconds % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
@@ -192,13 +256,20 @@ function HIITTimer() {
   };
 
   const getIntensityLevel = () => {
-    // This logic might need refinement based on actual fitness standards
-    // For simplicity, let's use a rough ratio of work to rest and work time itself
-    const ratio = workTime / (workTime + restTime);
-    if (workTime <= 20 && ratio >= 0.5) return 'EXTREME'; // E.g., Tabata
-    if (workTime <= 30 && ratio >= 0.4) return 'HIGH';
-    if (workTime <= 45 && ratio >= 0.3) return 'MODERATE';
-    return 'ENDURANCE'; // Longer work, shorter rest usually
+    // Calculate effective work-to-rest ratio for rounds
+    const totalWorkInRounds = workTime * rounds;
+    const totalRestInRounds = restTime * (rounds > 1 ? rounds - 1 : 0);
+    const totalActiveTime = totalWorkInRounds + totalRestInRounds;
+
+    if (totalActiveTime === 0) return 'N/A'; // Avoid division by zero
+
+    const workRatio = totalWorkInRounds / totalActiveTime;
+
+    // Define thresholds based on work time and work ratio
+    if (workTime <= 20 && workRatio >= 0.6) return 'EXTREME'; // Very short work, high ratio (e.g., Tabata)
+    if (workTime <= 30 && workRatio >= 0.5) return 'HIGH';    // Shorter work, balanced ratio
+    if (workTime <= 45 && workRatio >= 0.4) return 'MODERATE'; // Moderate work, moderate ratio
+    return 'ENDURANCE'; // Longer work, or lower work ratio
   };
 
   return (
@@ -206,10 +277,9 @@ function HIITTimer() {
       <Helmet>
         <title>HIIT Timer - High-Intensity Interval Training | Timer Central</title>
         <meta name="description" content="Free online HIIT timer for high-intensity interval training workouts. Customize work, rest, rounds, and prepare times for Tabata, sprint, and endurance intervals."></meta>
-        {/* You can add more meta tags here if needed for HIIT Timer */}
       </Helmet>
 
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md mx-auto p-4 md:p-6 lg:p-8">
         <Card className={`shadow-xl transition-colors border-2 ${getPhaseColor()}`}>
           <CardContent className="p-8 text-center">
             {showSettings && currentPhase === 'prepare' && !isRunning ? (
@@ -244,7 +314,7 @@ function HIITTimer() {
                       min="5"
                       max="300"
                       value={workTime}
-                      onChange={(e) => setWorkTime(Math.max(5, Math.min(300, parseInt(e.target.value) || 20)))}
+                      onChange={handleWorkTimeChange}
                       className="text-center"
                       disabled={selectedProtocol.name !== 'Custom'}
                     />
@@ -257,7 +327,7 @@ function HIITTimer() {
                       min="5"
                       max="180"
                       value={restTime}
-                      onChange={(e) => setRestTime(Math.max(5, Math.min(180, parseInt(e.target.value) || 10)))}
+                      onChange={handleRestTimeChange}
                       className="text-center"
                       disabled={selectedProtocol.name !== 'Custom'}
                     />
@@ -270,7 +340,7 @@ function HIITTimer() {
                       min="1"
                       max="30"
                       value={rounds}
-                      onChange={(e) => setRounds(Math.max(1, Math.min(30, parseInt(e.target.value) || 8)))}
+                      onChange={handleRoundsChange}
                       className="text-center"
                       disabled={selectedProtocol.name !== 'Custom'}
                     />
@@ -283,7 +353,7 @@ function HIITTimer() {
                       min="5"
                       max="60"
                       value={prepareTime}
-                      onChange={(e) => setPrepareTime(Math.max(5, Math.min(60, parseInt(e.target.value) || 10)))}
+                      onChange={handlePrepareTimeChange}
                       className="text-center"
                     />
                   </div>
@@ -368,12 +438,12 @@ function HIITTimer() {
                           key={i}
                           className={`w-2 h-2 rounded-full ${
                             i < currentRound - 1
-                              ? 'bg-purple-500'
+                              ? 'bg-purple-500' // Completed rounds
                               : i === currentRound - 1
                                 ? currentPhase === 'work'
-                                  ? 'bg-red-500 animate-pulse'
-                                  : 'bg-green-500 animate-pulse'
-                                : 'bg-gray-300'
+                                  ? 'bg-red-500 animate-pulse' // Current work round
+                                  : 'bg-green-500 animate-pulse' // Current rest round
+                                : 'bg-gray-300' // Future rounds
                           }`}
                         />
                       ))}
@@ -406,6 +476,17 @@ function HIITTimer() {
               >
                 <RotateCcw className="w-6 h-6" />
               </Button>
+
+              {!showSettings && currentPhase === 'prepare' && (
+                <Button
+                  onClick={() => setShowSettings(true)}
+                  size="lg"
+                  variant="outline"
+                  className="w-16 h-16 rounded-full"
+                >
+                  <Settings className="w-6 h-6" />
+                </Button>
+              )}
             </div>
 
             <div className="mt-6 text-sm text-gray-600">
